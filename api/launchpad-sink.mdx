@@ -1,0 +1,123 @@
+---
+title: "@code-review-harness/launchpad-sink"
+description: "The launchpad-sink package exports createLaunchpadSink(), posting review findings as inline comments and a verdict vote to a Launchpad merge proposal."
+---
+
+`@code-review-harness/launchpad-sink` implements the `ReviewSink` interface for Launchpad. When the agent calls `submit_review`, the sink posts inline comments to the numbered diff, adds a general review body, and casts a vote on the merge proposal — all via the Launchpad REST API. Use it alongside `@code-review-harness/launchpad-provider` for a complete Launchpad review workflow.
+
+## Installation
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    npm install @code-review-harness/launchpad-sink
+    ```
+  </Tab>
+  <Tab title="pnpm">
+    ```bash
+    pnpm add @code-review-harness/launchpad-sink
+    ```
+  </Tab>
+  <Tab title="yarn">
+    ```bash
+    yarn add @code-review-harness/launchpad-sink
+    ```
+  </Tab>
+</Tabs>
+
+## Import
+
+```typescript
+import { createLaunchpadSink } from "@code-review-harness/launchpad-sink";
+```
+
+## Signature
+
+```typescript
+function createLaunchpadSink(
+  options: LaunchpadSinkOptions
+): LaunchpadSink
+```
+
+## Options
+
+<ParamField body="url" type="string" required>
+  The full Launchpad API URL of the merge proposal. Must match the URL used with `createLaunchpadProvider()`. For example: `https://api.launchpad.net/devel/~user/+git/repo/+merge/123`.
+</ParamField>
+
+<ParamField body="api" type="LaunchpadApi">
+  Inject a custom `LaunchpadApi` client instance. When provided, the `accessToken`, `accessSecret`, and `consumerKey` options are ignored.
+</ParamField>
+
+<ParamField body="accessToken" type="string">
+  Launchpad OAuth access token. Overrides the `LP_ACCESS_TOKEN` environment variable.
+</ParamField>
+
+<ParamField body="accessSecret" type="string">
+  Launchpad OAuth access secret. Overrides the `LP_ACCESS_SECRET` environment variable.
+</ParamField>
+
+<ParamField body="consumerKey" type="string">
+  Launchpad OAuth consumer key. Overrides the `LP_CONSUMER_KEY` environment variable. Defaults to `"crh"`.
+</ParamField>
+
+## Review schema
+
+The sink uses the following TypeBox schema. The agent must produce a payload matching this shape when it calls `submit_review`:
+
+```typescript
+{
+  previewDiffId: number;         // The preview diff round to attach inline comments to.
+  summary: string;               // Overall review summary posted as the general comment body.
+  verdict: "approve" | "needs-work" | "abstain";
+  comments: string[];            // Additional general comment lines appended to the summary.
+  inline_comments: Record<string, string>; // Map of numbered-diff line → inline comment text.
+}
+```
+
+## Verdict mapping
+
+The `verdict` field maps to a Launchpad vote as follows:
+
+| Verdict | Launchpad vote |
+|---|---|
+| `"approve"` | `Approve` |
+| `"needs-work"` | `Needs Fixing` |
+| `"abstain"` | `Abstain` |
+
+## Inline comment constraints
+
+<Warning>
+  Only numbered-diff line keys that reference actual content lines in the `numbered.diff` file are posted. A key is valid when it is a plain integer string (e.g. `"42"`) and the corresponding line in `numbered.diff` matches the pattern `\s*\d+: ` (i.e. it is a numbered content line, not a header).
+
+  Keys that are ranges (e.g. `"10-20"`), header-line references, or non-numeric strings are silently dropped before posting.
+</Warning>
+
+## Environment variables
+
+| Variable | Description |
+|---|---|
+| `LP_ACCESS_TOKEN` | OAuth access token for the Launchpad API. |
+| `LP_ACCESS_SECRET` | OAuth access secret for the Launchpad API. |
+| `LP_CONSUMER_KEY` | OAuth consumer key. Defaults to `"crh"`. |
+
+## Usage example
+
+```typescript
+import { createReviewSession } from "@code-review-harness/core";
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createLaunchpadSink } from "@code-review-harness/launchpad-sink";
+
+const mpUrl = "https://api.launchpad.net/devel/~user/+git/repo/+merge/123";
+
+// Both provider and sink target the same merge proposal URL.
+const provider = createLaunchpadProvider({ url: mpUrl });
+const sink = createLaunchpadSink({ url: mpUrl });
+
+const { session } = await createReviewSession({ provider, sink });
+
+session.subscribe((event) => process.stderr.write(`${JSON.stringify(event)}\n`));
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+After the agent calls `submit_review`, the sink posts the inline comments and then casts the verdict vote as a single `postComment` call with the formatted review body.

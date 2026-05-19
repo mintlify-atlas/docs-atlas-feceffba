@@ -1,0 +1,65 @@
+---
+title: "Stdout sink — dry-run review output"
+description: "The stdout sink writes the complete structured review as a single JSON line to stdout, ideal for dry-runs, piping to other tools, or CI inspection."
+---
+
+A **sink** is where a completed review goes after the AI agent finishes its session. The stdout sink serializes the full review payload as a single JSON line and writes it to `process.stdout`. Because it makes no network calls, it is the safest option for local testing, CI pipelines, and scripted workflows where you want to inspect or forward the review without posting anything back to Launchpad.
+
+## Installation
+
+The sink is available as a standalone package:
+
+```bash
+npm install @code-review-harness/stdout-sink
+# or
+pnpm add @code-review-harness/stdout-sink
+```
+
+## Usage
+
+### CLI
+
+`stdout` is the default sink, so you can omit `--sink` entirely or pass it explicitly:
+
+```bash
+crh review \
+  --provider launchpad \
+  --pr "https://api.launchpad.net/devel/~user/+git/repo/+merge/123" \
+  --sink stdout
+```
+
+### Programmatic
+
+```ts
+import { createStdoutSink } from "@code-review-harness/stdout-sink";
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createReviewSession } from "@code-review-harness/core";
+
+const provider = createLaunchpadProvider({
+  url: "https://api.launchpad.net/devel/~user/+git/repo/+merge/123",
+});
+const sink = createStdoutSink();
+
+const { session } = await createReviewSession({ provider, sink });
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+`createStdoutSink` takes no arguments and returns a `StdoutSink` instance immediately.
+
+## Output format
+
+When the review session completes, the sink emits exactly **one line** to stdout: a `JSON.stringify`-serialized review object followed by `\n`. The stdout sink uses an open-record schema so the exact shape is determined by the agent. A typical output looks like:
+
+```json
+{"verdict":"needs-work","summary":"One major issue found.","findings":[{"severity":"major","path":"src/auth.ts","line":42,"comment":"Token is logged in plain text."}]}
+```
+
+The line is a JSON-serialized review payload followed by a newline character (`\n`). You can pipe this output directly to `jq`, store it in a file, or forward it to another tool:
+
+```bash
+crh review --provider launchpad --pr "$MP_URL" --sink stdout | jq .verdict
+```
+
+<Note>
+  The stdout sink is a dry-run — it does not post any comments or votes back to the Launchpad merge proposal. Use the [Launchpad sink](/sinks/launchpad-sink) when you are ready to publish review results.
+</Note>

@@ -1,0 +1,98 @@
+---
+title: "Launchpad sink — post reviews as comments"
+description: "The Launchpad sink posts inline diff comments and a summary verdict back to a Launchpad merge proposal using OAuth 1.0a authentication."
+---
+
+The Launchpad sink takes the completed AI review and publishes it directly to the merge proposal. It works in two steps: first it posts any inline comments against the numbered-diff line numbers in the active preview diff, then it posts a summary comment containing the overall verdict and a formatted list of general comments. The verdict is recorded as a Launchpad code-review vote so reviewers and CI can act on it immediately.
+
+<Warning>
+  This sink makes **live API calls** to Launchpad and posts real comments on the merge proposal. You must supply valid OAuth tokens and should test against a sandbox MP before running in production.
+</Warning>
+
+## Installation
+
+```bash
+npm install @code-review-harness/launchpad-sink
+# or
+pnpm add @code-review-harness/launchpad-sink
+```
+
+## Authentication
+
+The sink authenticates using OAuth 1.0a HMAC-SHA1. Set the following environment variables before running:
+
+```bash
+export LP_ACCESS_TOKEN=your-access-token
+export LP_ACCESS_SECRET=your-access-secret
+export LP_CONSUMER_KEY=crh
+```
+
+`LP_CONSUMER_KEY` defaults to `"crh"` when omitted. You can also supply credentials inline via `LaunchpadSinkOptions` (see [Programmatic usage](#programmatic-usage) below); inline values override the environment variables.
+
+## Configuration
+
+The sink accepts a `LaunchpadSinkOptions` object:
+
+| Field          | Type     | Required | Description                                                                           |
+| -------------- | -------- | -------- | ------------------------------------------------------------------------------------- |
+| `url`          | `string` | Yes      | Launchpad API merge proposal URL (same format as the provider).                       |
+| `api`          | object   | No       | Pre-constructed `LaunchpadApi` instance. Overrides all OAuth options when provided.   |
+| `accessToken`  | `string` | No       | OAuth access token. Falls back to `LP_ACCESS_TOKEN`.                                  |
+| `accessSecret` | `string` | No       | OAuth access secret. Falls back to `LP_ACCESS_SECRET`.                                |
+| `consumerKey`  | `string` | No       | OAuth consumer key. Falls back to `LP_CONSUMER_KEY`, then `"crh"`.                    |
+
+## Verdict mapping
+
+The agent produces a verdict string which the sink converts to the corresponding Launchpad code-review vote:
+
+| Agent verdict  | Launchpad vote   |
+| -------------- | ---------------- |
+| `approve`      | `Approve`        |
+| `needs-work`   | `Needs Fixing`   |
+| `abstain`      | `Abstain`        |
+
+## Inline comment behaviour
+
+The sink reads the `numbered.diff` file from the workspace to validate inline comment keys. Only keys that correspond to **single numbered-diff line numbers** are posted. Range keys (e.g. `"5-10"`) and header-line keys are silently dropped.
+
+<Info>
+  Inline comments are posted in a single batch API call before the summary comment is posted, so both appear in the correct order on the merge proposal.
+</Info>
+
+## Usage
+
+### CLI
+
+```bash
+LP_ACCESS_TOKEN=... LP_ACCESS_SECRET=... LP_CONSUMER_KEY=crh \
+  crh review \
+    --provider launchpad \
+    --pr "$MP_URL" \
+    --sink launchpad
+```
+
+### Programmatic
+
+```ts
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createLaunchpadSink } from "@code-review-harness/launchpad-sink";
+import { createReviewSession } from "@code-review-harness/core";
+
+const url = "https://api.launchpad.net/devel/~user/+git/repo/+merge/123";
+
+const provider = createLaunchpadProvider({ url });
+const sink = createLaunchpadSink({
+  url,
+  // OAuth credentials — omit to fall back to environment variables
+  accessToken: process.env.LP_ACCESS_TOKEN,
+  accessSecret: process.env.LP_ACCESS_SECRET,
+  consumerKey: process.env.LP_CONSUMER_KEY ?? "crh",
+});
+
+const { session } = await createReviewSession({ provider, sink });
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+<Note>
+  `createLaunchpadSink` is impure — it reads environment variables for OAuth config when credentials are not supplied inline.
+</Note>

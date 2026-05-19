@@ -1,0 +1,81 @@
+---
+title: "Authenticate with Launchpad using OAuth"
+description: "Configure Launchpad OAuth 1.0a credentials for CRH using environment variables or LaunchpadProviderOptions to enable posting reviews as comments."
+---
+
+Launchpad uses OAuth 1.0a HMAC-SHA1 for all authenticated API calls. CRH reads your credentials from environment variables at startup, so you don't need to pass them explicitly when using the CLI. You only need credentials when writing back to Launchpad — reading public merge proposals works without any OAuth setup.
+
+## When you need authentication
+
+| Operation | Auth required? |
+|---|---|
+| Reading a public merge proposal (metadata, diffs, comments) | No |
+| Posting inline comments or a summary vote (`--sink launchpad`) | Yes |
+| Dry-run output to stdout (`--sink stdout`) | No |
+
+<Note>
+The `stdout` sink writes the review as a single JSON line to standard output and never contacts the Launchpad API. You can use it as a fully credential-free dry-run mode.
+</Note>
+
+## Environment variables
+
+Set these three variables before running `crh` or starting your program:
+
+| Variable | Description |
+|---|---|
+| `LP_ACCESS_TOKEN` | Your OAuth access token |
+| `LP_ACCESS_SECRET` | Your OAuth access secret |
+| `LP_CONSUMER_KEY` | OAuth consumer key — defaults to `crh` when omitted |
+
+```sh
+export LP_ACCESS_TOKEN=...
+export LP_ACCESS_SECRET=...
+export LP_CONSUMER_KEY=crh
+```
+
+Pass them inline with a single command instead of exporting:
+
+```sh
+LP_ACCESS_TOKEN=... \
+LP_ACCESS_SECRET=... \
+LP_CONSUMER_KEY=crh \
+crh review \
+  --provider launchpad \
+  --pr "https://api.launchpad.net/devel/~user/+git/repo/+merge/123" \
+  --sink launchpad
+```
+
+## Passing credentials programmatically
+
+When you embed CRH in a TypeScript program, pass credentials directly to `createLaunchpadProvider` or `createLaunchpadSink` via `LaunchpadProviderOptions`:
+
+```typescript
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createLaunchpadSink } from "@code-review-harness/launchpad-sink";
+
+const provider = createLaunchpadProvider({
+  url: "https://api.launchpad.net/devel/~user/+git/repo/+merge/123",
+  accessToken: process.env.LP_ACCESS_TOKEN,
+  accessSecret: process.env.LP_ACCESS_SECRET,
+  consumerKey: process.env.LP_CONSUMER_KEY ?? "crh",
+});
+
+const sink = createLaunchpadSink({
+  url: "https://api.launchpad.net/devel/~user/+git/repo/+merge/123",
+  accessToken: process.env.LP_ACCESS_TOKEN,
+  accessSecret: process.env.LP_ACCESS_SECRET,
+  consumerKey: process.env.LP_CONSUMER_KEY ?? "crh",
+});
+```
+
+The three credential fields on both options interfaces are:
+
+- `accessToken` — your OAuth access token
+- `accessSecret` — your OAuth access secret
+- `consumerKey` — OAuth consumer key (defaults to `crh`)
+
+Explicit values take precedence over environment variables.
+
+<Warning>
+Never commit OAuth tokens to source control. Store them in a secrets manager, CI environment secrets, or a `.env` file that is listed in `.gitignore`.
+</Warning>

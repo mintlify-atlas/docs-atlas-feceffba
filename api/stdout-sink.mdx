@@ -1,0 +1,95 @@
+---
+title: "@code-review-harness/stdout-sink"
+description: "The stdout-sink package exports createStdoutSink(), writing the complete review as a single JSON line to stdout for dry-runs and pipeline inspection."
+---
+
+`@code-review-harness/stdout-sink` provides a zero-configuration sink that writes the agent's review payload as a single JSON line to `process.stdout`. It requires no authentication and accepts no options, making it the fastest way to test a review pipeline or inspect the raw output before wiring up a platform-specific sink.
+
+<Note>
+  `createStdoutSink()` is the default sink used by the CRH CLI when `--sink` is not specified.
+</Note>
+
+## Installation
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    npm install @code-review-harness/stdout-sink
+    ```
+  </Tab>
+  <Tab title="pnpm">
+    ```bash
+    pnpm add @code-review-harness/stdout-sink
+    ```
+  </Tab>
+  <Tab title="yarn">
+    ```bash
+    yarn add @code-review-harness/stdout-sink
+    ```
+  </Tab>
+</Tabs>
+
+## Import
+
+```typescript
+import { createStdoutSink } from "@code-review-harness/stdout-sink";
+```
+
+## Signature
+
+```typescript
+function createStdoutSink(): StdoutSink
+```
+
+No options. No arguments.
+
+## Output format
+
+When the agent calls `submit_review`, the sink serialises the full review object with `JSON.stringify` and writes it as a single line followed by a newline character (`\n`) to `process.stdout`.
+
+The stdout sink uses `Type.Record(Type.String(), Type.Unknown())` as its schema — it accepts any JSON object the agent produces. This means the output shape is determined entirely by what you prompt the agent to include. For a typical CRH review the output looks something like this:
+
+```json
+{"verdict":"needs-work","summary":"One major issue found in auth module.","findings":[{"severity":"major","path":"src/auth.ts","line":42,"comment":"Token is logged in plain text."}]}
+```
+
+<Info>
+  If you need a predictable output shape with enforced fields, implement a custom `ReviewSink` with an explicit TypeBox schema. See the [ReviewSink interface](/api/review-sink) for details.
+</Info>
+
+## Usage example
+
+```typescript
+import { createReviewSession } from "@code-review-harness/core";
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createStdoutSink } from "@code-review-harness/stdout-sink";
+
+const provider = createLaunchpadProvider({
+  url: process.argv[2] ?? "",
+});
+
+// Pipe stdout to a file or jq for inspection.
+const sink = createStdoutSink();
+
+const { session } = await createReviewSession({ provider, sink });
+
+// Stream agent events to stderr to keep stdout clean for the JSON output.
+session.subscribe((event) => process.stderr.write(`${JSON.stringify(event)}\n`));
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+Run it and capture the review:
+
+```bash
+node review.js https://api.launchpad.net/devel/~user/+git/repo/+merge/123 \
+  2>agent-events.ndjson \
+  | jq .
+```
+
+## When to use stdout-sink
+
+- **Local development** — inspect the review shape without posting anything to a code host.
+- **CI pipelines** — capture the JSON artifact for downstream steps (notifications, metrics, archiving).
+- **Schema exploration** — run once to see what the agent produces before writing a custom `ReviewSink`.
+
+Switch to [`createLaunchpadSink()`](/api/launchpad-sink) when you are ready to post reviews back to Launchpad.

@@ -1,0 +1,115 @@
+---
+title: "The CRH workspace model"
+description: "CRH builds a deterministic workspace tree before starting the agent session — metadata, diffs, comments, and cloned repo files are materialized to disk."
+---
+
+CRH performs a single, upfront network burst to fetch everything the agent will need — PR metadata, CI status, diff rounds, inline comments, and agent instruction files cloned from git — then writes the complete workspace tree to a temporary directory before the agent session starts. This design keeps the review session fully reproducible: every piece of data is already on disk, so the agent never makes ad-hoc network fetches mid-session and re-runs on identical input produce a byte-identical workspace tree.
+
+## Directory layout
+
+```
+workspace/
+├── metadata.json           # PR title, body, author, git paths
+├── description.md          # Markdown version of the PR description
+├── ci.json                 # CI status checks
+├── reviewed.json           # Files marked reviewed (written during session)
+├── agent/
+│   ├── AGENTS.md           # Repo-provided agent instructions (if present)
+│   ├── rules/              # .cursor/rules/*.md or .clinerules files
+│   └── skills/             # .crh/skills/*.md files
+└── preview-diffs/
+    ├── index.json          # List of all diff rounds
+    ├── latest -> <id>/     # Symlink to the latest round
+    └── <id>/
+        ├── meta.json       # Round metadata (id, createdAt, baseRev, headRev)
+        ├── diff/
+        │   ├── raw.diff       # Raw unified diff
+        │   ├── numbered.diff  # Diff with line numbers for inline citing
+        │   └── files/
+        │       └── <safe-path>/
+        │           ├── patch      # File-level patch
+        │           └── meta.json  # path, status, additions, deletions, lineMap
+        └── comments/
+            ├── general.json
+            └── inline/
+                └── <line>.json
+```
+
+`prepareWorkspace` fetches metadata, CI, and the diff round list in parallel, then writes each round's diff and comments concurrently. Agent instruction files are read directly from the git object store (via `isomorphic-git`) so no full checkout is needed.
+
+## The `numbered.diff` format
+
+`raw.diff` is the standard unified diff. `numbered.diff` is a transformed version where every line is prefixed with a monotonically increasing integer:
+
+```
+1  diff --git a/src/foo.ts b/src/foo.ts
+2  --- a/src/foo.ts
+3  +++ b/src/foo.ts
+4  @@ -10,6 +10,7 @@
+5   import { bar } from './bar';
+6  -const x = old();
+7  +const x = new();
+8   export default x;
+```
+
+These line numbers are the stable identifiers agents use when citing findings. When a sub-agent reports a finding at `line: 7`, the sink (e.g. Launchpad) maps that number back to the exact diff position for posting an inline comment.
+
+<Note>
+  The `diff_numbered` tool exposes `numbered.diff` with pagination (`start`/`end` params) and reports `totalLines` so an agent can detect when the response was truncated and request the next window.
+</Note>
+
+## The `lineMap` in file `meta.json`
+
+Each per-file `meta.json` contains a `lineMap` object that maps a numbered-diff line number to its location in the actual file:
+
+```json
+{
+  "path": "src/foo.ts",
+  "status": "modified",
+  "additions": 3,
+  "deletions": 1,
+  "lineMap": {
+    "6": { "side": "before", "fileLine": 10 },
+    "7": { "side": "after",  "fileLine": 10 },
+    "8": { "side": "context", "fileLine": 11 }
+  }
+}
+```
+
+| `side` value | Meaning |
+|---|---|
+| `"before"` | Line existed in the base revision (deleted or context on the left) |
+| `"after"` | Line exists in the head revision (added or context on the right) |
+| `"context"` | Unchanged context line present in both revisions |
+
+The `diff_map_line` tool uses this map to resolve a numbered-diff line to `{ path, side, fileLine }` without requiring the agent to parse the diff itself.
+
+## Agent file materialization
+
+CRH looks for agent instruction files in the git repository at the head ref and copies them into `workspace/agent/`:
+
+- `AGENTS.md`, `CLAUDE.md`, or `.cursorrules` → `agent/AGENTS.md` (first match wins)
+- `.cursor/rules/*.md` → `agent/rules/`
+- `.clinerules/*` → `agent/rules/`
+- `.crh/skills/*.md` → `agent/skills/`
+
+<Info>
+  These files are optional. If none exist the `agent/` subdirectories are created but remain empty. The agent checks which files are present via `agent_files_list` and skips missing ones — a missing `AGENTS.md` is never reported as a finding.
+</Info>
+
+## Read-only agent surface
+
+The agent session does **not** expose mutating built-in tools (`bash`, `edit`, `write`). The agent can only access:
+
+- **Read-only built-ins**: `read`, `grep`, `find`, `ls` — scoped to the workspace directory only
+- **CRH PR tools**: `mp_metadata`, `preview_diffs_list`, `diff_list_files`, `diff_get_file`, `diff_numbered`, `diff_map_line`, `comments_general`, `comments_inline`, `agent_files_list`, `mark_file_reviewed`
+- **CRH repo tools**: `repo_read`, `repo_ls`, `repo_grep`, `repo_stat` — read from the git object store
+- **Session tools**: `delegate_review`, `submit_review`
+
+<Warning>
+  The workspace directory is **not** a source checkout. Built-in `read`/`grep`/`find`/`ls` see only `metadata.json`, `preview-diffs/`, and `agent/`. To read repository source files, the agent must use `repo_read`, `repo_ls`, `repo_grep`, or `repo_stat`.
+</Warning>
+
+## Determinism guarantee
+
+`prepareWorkspace` uses `stableJson` (sorted key serialization) when writing all JSON files. Combined with sorted diff rounds and sorted file entries, re-runs against the same provider inputs produce a byte-identical workspace tree. This makes workspace snapshots suitable for reproducible test fixtures.

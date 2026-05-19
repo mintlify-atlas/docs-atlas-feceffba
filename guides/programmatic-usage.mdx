@@ -1,0 +1,86 @@
+---
+title: "Use Code Review Harness programmatically"
+description: "Embed CRH in your TypeScript pipelines by importing createReviewSession, a provider, and a sink from their respective npm packages."
+---
+
+CRH exposes a full TypeScript API so you can embed AI code reviews directly into your own pipelines without using the CLI. You import a provider (where to read the merge proposal from), a sink (where to send the review), and `createReviewSession` from `@code-review-harness/core`, then drive the session with a single prompt.
+
+## Install packages
+
+```sh
+npm install @code-review-harness/core @code-review-harness/launchpad-provider @code-review-harness/stdout-sink
+```
+
+## Import the API
+
+```typescript
+import { createReviewSession } from "@code-review-harness/core";
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createStdoutSink } from "@code-review-harness/stdout-sink";
+```
+
+## Minimal example
+
+The following script (from `examples/launchpad-mp.ts`) is all you need to run a full review and print the result to stdout:
+
+```typescript
+const provider = createLaunchpadProvider({ url: process.argv[2] ?? "" });
+const sink = createStdoutSink();
+const { session } = await createReviewSession({ provider, sink });
+session.subscribe((event) => process.stderr.write(`${JSON.stringify(event)}\n`));
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+Run it with:
+
+```sh
+node --import tsx your-script.ts "https://api.launchpad.net/devel/~user/+git/repo/+merge/123"
+```
+
+## `createReviewSession` options
+
+`createReviewSession` accepts a `CreateReviewSessionOptions` object and returns a `Promise<ReviewSessionHandle>`.
+
+### `CreateReviewSessionOptions`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `provider` | `ReviewProvider` | Yes | Source of merge proposal data (diffs, comments, CI). |
+| `sink` | `ReviewSink` | Yes | Destination for the finished review. |
+| `workspace` | `string` | No | Path to use as the agent workspace. A temp directory is created automatically when omitted. |
+| `gitdir` | `string` | No | Path to use as the bare git clone directory. A temp directory is created automatically when omitted. |
+| `model` | `Model<any>` | No | Override the default LLM model. |
+| `systemPrompt` | `string` | No | Override the orchestrator agent's system prompt. |
+| `subAgentSystemPrompt` | `string` | No | Override sub-agent system prompts used by `delegate_review`. |
+| `workspaceProgress` | `(message: string) => void` | No | Callback invoked with progress messages while the workspace is being prepared. |
+| `onChildEvent` | `(event: AgentSessionEvent, ctx: DelegateChildContext) => void` | No | Callback for events emitted by sub-agents spawned by `delegate_review`. |
+
+### `ReviewSessionHandle`
+
+`createReviewSession` resolves to an object with these fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `session` | `AgentSession` | The live agent session. Call `session.prompt()` to send a message and `session.subscribe()` to observe events. |
+| `workspace` | `string` | Absolute path to the prepared workspace directory. |
+| `gitdir` | `string` | Absolute path to the bare git clone directory. |
+| `changedFiles` | `string[]` | List of file paths changed in the latest preview diff. |
+
+## Subscribing to session events
+
+Call `session.subscribe(listener)` before `session.prompt()` to receive a stream of `AgentSessionEvent` objects as the agent works:
+
+```typescript
+session.subscribe((event) => {
+  // event contains tool calls, assistant messages, errors, etc.
+  process.stderr.write(`${JSON.stringify(event)}\n`);
+});
+
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+`session.prompt()` resolves when the agent has finished the turn (including calling `submit_review`).
+
+<Tip>
+For CLI users, pass `--debug` to print the same event stream to stderr without writing any code. For programmatic users, subscribing to events is the equivalent way to get full visibility into what the agent is doing.
+</Tip>

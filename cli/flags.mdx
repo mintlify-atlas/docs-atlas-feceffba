@@ -1,0 +1,100 @@
+---
+title: "crh review command flags reference"
+description: "Complete reference for all crh review flags including --provider, --pr, --sink, --model, --model-base-url, --debug, --no-sandbox, and --config."
+---
+
+Every flag accepted by `crh review` is documented here, including its type, default value, and behaviour. Two flags — `--no-sandbox` and `--config` — are parsed by the CLI but their underlying functionality is not yet complete in v1.
+
+## Flags
+
+<ParamField path="--provider" type="string" required>
+  The code hosting provider to fetch the merge proposal from. Only `launchpad` is supported in v1. Passing any other value causes the command to exit with an error.
+
+  ```bash
+  --provider launchpad
+  ```
+</ParamField>
+
+<ParamField path="--pr" type="string" required>
+  The Launchpad API URL for the merge proposal to review. Must be a git merge proposal URL in the form `https://api.launchpad.net/devel/~<user>/+git/<repo>/+merge/<id>`. Bazaar merge proposal URLs are explicitly rejected.
+
+  ```bash
+  --pr "https://api.launchpad.net/devel/~user/+git/repo/+merge/123"
+  ```
+</ParamField>
+
+<ParamField path="--sink" type="string" default="stdout">
+  Where the completed review is emitted.
+
+  - `stdout` — writes a single JSON line to standard output. Use this for local dry-runs or scripted pipelines.
+  - `launchpad` — posts inline comments for each finding and a summary comment with a verdict vote back to the merge proposal. Requires valid Launchpad OAuth credentials (`LP_ACCESS_TOKEN`, `LP_ACCESS_SECRET`, `LP_CONSUMER_KEY`).
+
+  ```bash
+  --sink launchpad
+  ```
+</ParamField>
+
+<ParamField path="--model" type="string" default="anthropic:claude-sonnet-4-6">
+  The LLM to use for the review session, in `provider:model-id` format. The provider prefix determines which API client and key environment variable CRH uses. See [Model selection](/cli/model-selection) for the full list of examples and the API key naming convention.
+
+  ```bash
+  --model anthropic:claude-sonnet-4-6
+  ```
+</ParamField>
+
+<ParamField path="--model-base-url" type="string">
+  Override the API base URL for the chosen model. Only valid with OpenAI-compatible models (`openai:*` or a registered provider whose API type is `openai-completions` / `openai-responses`). Passing this flag with a non-compatible model causes the command to exit with an error.
+
+  ```bash
+  --model openai:gpt-5.4-mini --model-base-url "http://localhost:8080/v1"
+  ```
+</ParamField>
+
+<ParamField path="--debug" type="boolean">
+  Dump all raw session events and sub-agent events to stderr as newline-delimited JSON. Useful for diagnosing unexpected agent behaviour or inspecting the full event stream during development.
+
+  ```bash
+  --debug
+  ```
+</ParamField>
+
+<ParamField path="--no-sandbox" type="boolean">
+  Accepted by the CLI parser and stored as an option, but sandbox lifecycle enforcement is incomplete in v1. Passing this flag does not currently change runtime isolation behaviour.
+</ParamField>
+
+<ParamField path="--config" type="string">
+  Accepted by the CLI parser as a path to a configuration file, but config file loading is incomplete in v1. Passing this flag has no effect on the running session.
+</ParamField>
+
+<Warning>
+  `--no-sandbox` and `--config` are accepted by the CLI in v1 but are **not fully implemented**. They will not change agent isolation or load any configuration file. Their behaviour will be defined in a future release.
+</Warning>
+
+## Complete example
+
+The following command combines multiple flags to post a review using a locally running OpenAI-compatible model with debug output enabled:
+
+```bash
+OPENAI_API_KEY="$YOUR_KEY" \
+LP_ACCESS_TOKEN="$LP_TOKEN" \
+LP_ACCESS_SECRET="$LP_SECRET" \
+LP_CONSUMER_KEY=crh \
+crh review \
+  --provider launchpad \
+  --pr "https://api.launchpad.net/devel/~user/+git/repo/+merge/123" \
+  --sink launchpad \
+  --model openai:gpt-5.4-mini \
+  --model-base-url "http://localhost:8080/v1" \
+  --debug
+```
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="crh review command" icon="terminal" href="/cli/review-command">
+    Syntax overview and usage examples for the review command.
+  </Card>
+  <Card title="Model selection" icon="cpu" href="/cli/model-selection">
+    Choose the LLM backend and configure API keys.
+  </Card>
+</CardGroup>

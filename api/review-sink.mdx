@@ -1,0 +1,127 @@
+---
+title: "ReviewSink interface"
+description: "The ReviewSink interface defines where CRH sends review output. Implement it to post findings to any destination — GitHub, Slack, databases, or webhooks."
+---
+
+`ReviewSink` is the generic interface that controls where CRH sends its review output. The sink carries a [TypeBox](https://github.com/sinclairzx81/typebox) schema that defines the exact shape the agent must produce when it calls the built-in `submit_review` tool. When the agent calls `submit_review`, CRH validates the output against the schema at runtime and then calls `emit()` with the validated payload. Implement this interface to send reviews to any destination — a database, a webhook, a file, or a code hosting platform.
+
+## Interface definition
+
+```typescript
+import type { TSchema, Static } from "@code-review-harness/core";
+
+interface ReviewSink<S extends TSchema = TSchema> {
+  id: string;
+  schema: S;
+  emit(
+    review: Static<S>,
+    ctx: { provider: ReviewProvider; workspace: string }
+  ): Promise<void>;
+}
+```
+
+## Members
+
+<ResponseField name="id" type="string" required>
+  A unique string identifier for this sink instance (e.g. `"stdout"`, `"launchpad"`). Used in logging and error messages.
+</ResponseField>
+
+<ResponseField name="schema" type="S extends TSchema" required>
+  A TypeBox schema object describing the review payload shape. CRH passes this schema to the agent's `submit_review` tool so the agent knows exactly what fields it must produce. Validation happens at runtime — if the agent submits a payload that does not match the schema, `submit_review` returns an error and the agent must retry.
+</ResponseField>
+
+<ResponseField name="emit(review, ctx)" type="Promise<void>">
+  Called by the `submit_review` tool with the validated review payload and a context object containing:
+  - `ctx.provider` — the `ReviewProvider` instance used for this session
+  - `ctx.workspace` — absolute path to the prepared workspace directory
+
+  This method is where you post the review to its destination. It may perform async I/O (HTTP requests, file writes, database inserts). Any thrown error propagates back to the agent as a tool error.
+</ResponseField>
+
+## How the schema works
+
+The `schema` field drives the entire output contract. When `createReviewSession()` sets up the `submit_review` tool, it reads `sink.schema` and generates the tool's parameter description from it. The agent sees the schema as a JSON Schema and must produce a conforming object.
+
+This means you can extend the schema with any custom fields and the agent will include them without any additional prompting:
+
+```typescript
+import { Type } from "@code-review-harness/core";
+
+const MyReviewSchema = Type.Object({
+  findings: Type.Array(Type.Object({
+    severity: Type.Union([
+      Type.Literal("blocker"),
+      Type.Literal("major"),
+      Type.Literal("minor"),
+    ]),
+    path: Type.Optional(Type.String()),
+    comment: Type.String(),
+  })),
+  summary: Type.String(),
+  // Custom field — the agent will populate this automatically.
+  estimated_review_time_minutes: Type.Optional(Type.Number()),
+});
+```
+
+## Minimal sink implementation
+
+```typescript
+import { Type, type Static, type TSchema } from "@code-review-harness/core";
+
+const MyReviewSchema = Type.Object({
+  findings: Type.Array(
+    Type.Object({
+      severity: Type.Union([
+        Type.Literal("blocker"),
+        Type.Literal("major"),
+        Type.Literal("minor"),
+        Type.Literal("nit"),
+        Type.Literal("info"),
+      ]),
+      path: Type.Optional(Type.String()),
+      line: Type.Optional(Type.Number()),
+      comment: Type.String(),
+    })
+  ),
+  summary: Type.String(),
+  verdict: Type.Union([
+    Type.Literal("approve"),
+    Type.Literal("needs-work"),
+    Type.Literal("abstain"),
+  ]),
+});
+
+const mySink = {
+  id: "my-sink",
+  schema: MyReviewSchema,
+  async emit(review, ctx) {
+    // `review` is fully typed as Static<typeof MyReviewSchema>.
+    console.log("Verdict:", review.verdict);
+    console.log("Summary:", review.summary);
+    for (const finding of review.findings) {
+      console.log(`[${finding.severity}] ${finding.path ?? "general"}: ${finding.comment}`);
+    }
+    // Post to your destination here.
+  },
+} satisfies ReviewSink<typeof MyReviewSchema>;
+```
+
+## Using the sink with createReviewSession
+
+```typescript
+import { createReviewSession } from "@code-review-harness/core";
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+
+const provider = createLaunchpadProvider({ url: process.env.MP_URL! });
+
+const { session } = await createReviewSession({
+  provider,
+  sink: mySink,
+});
+
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+<Tip>
+  For a ready-made sink that writes JSON to stdout, use [`createStdoutSink()`](/api/stdout-sink). For posting reviews back to Launchpad, use [`createLaunchpadSink()`](/api/launchpad-sink).
+</Tip>

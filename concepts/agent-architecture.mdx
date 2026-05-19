@@ -1,0 +1,161 @@
+---
+title: "Agent architecture: orchestrator and sub-agents"
+description: "CRH uses a two-tier agent model — an orchestrator agent fans out review work to parallel sub-agents, each with its own context window."
+---
+
+CRH uses a two-tier agent model to keep individual context windows focused while still reviewing large diffs end-to-end. A single orchestrator agent receives the full workspace and decides how to partition the review work. It then fans out to N ephemeral sub-agents — one per scope — that run in parallel, each with its own isolated context window. When all sub-agents have reported, the orchestrator aggregates their findings and calls `submit_review` to end the session.
+
+## Orchestrator agent
+
+The orchestrator is the top-level agent created by `createReviewSession`. It operates against the full prepared workspace.
+
+**What it receives:**
+- The complete workspace tree: `metadata.json`, `description.md`, `ci.json`, `preview-diffs/`, `agent/`
+- The default orchestrator system prompt (or a custom `systemPrompt` override)
+
+**Tools available to the orchestrator:**
+
+<CardGroup cols={2}>
+  <Card title="PR tools" icon="file-diff">
+    `mp_metadata`, `preview_diffs_list`, `diff_list_files`, `diff_get_file`, `diff_numbered`, `diff_map_line`, `comments_general`, `comments_inline`, `agent_files_list`, `mark_file_reviewed`
+  </Card>
+  <Card title="Session tools" icon="arrows-split-up-and-left">
+    `delegate_review`, `submit_review`
+  </Card>
+  <Card title="Repo tools (delegation path only)" icon="code-branch">
+    `repo_ls`, `repo_read`, `repo_grep`, `repo_stat`
+  </Card>
+  <Card title="Utility" icon="calculator">
+    `calc`
+  </Card>
+</CardGroup>
+
+**Prescribed execution sequence:**
+
+The orchestrator prompt enforces a strict, non-looping sequence:
+
+```
+(mp_metadata + diff_list_files in parallel) → ONE batched delegate_review → submit_review
+```
+
+<Warning>
+  The orchestrator is explicitly **banned** from calling `repo_read`, `repo_grep`, `repo_ls`, and `repo_stat` directly. All repository source inspection is delegated to sub-agents. Follow-up `delegate_review` calls are only permitted if a sub-agent flagged a blocker that requires cross-scope confirmation.
+</Warning>
+
+**Grouping strategy:**
+
+The orchestrator groups changed files into scopes before calling `delegate_review`. Files in the same module, feature, or touched API surface go into the same scope. Each sub-agent has at least 250k tokens of context, so the orchestrator packs as many related files as possible per scope to minimize the total number of sub-agents spawned. A file only gets its own scope if it has ≥ 1,500 changed lines or is semantically independent.
+
+## Sub-agents
+
+Sub-agents are ephemeral agents spawned inside the `delegate_review` tool. Each call to `delegate_review` with a `scopes` array creates one sub-agent per entry, all running in parallel via `Promise.all`.
+
+**How a sub-agent is created:**
+
+Each scope in the `scopes` array produces a `SliceSchema` entry:
+
+```ts
+{
+  scope: string;        // e.g. "file: src/auth/session.ts"
+  focus?: string;       // e.g. "security, error handling"
+  previewDiffId?: number;
+}
+```
+
+`createDelegateReviewTool` spawns a fresh `createAgentSession` per slice, each with its own in-memory `SettingsManager` and `SessionManager`. Sub-agents do not share state.
+
+**Tools available to sub-agents:**
+
+| Category | Tools |
+|---|---|
+| Read-only built-ins | `read`, `grep`, `find`, `ls` |
+| PR tools | `mp_metadata`, `preview_diffs_list`, `diff_list_files`, `diff_get_file`, `diff_numbered`, `diff_map_line`, `comments_general`, `comments_inline`, `agent_files_list`, `mark_file_reviewed` |
+| Repo tools | `repo_read`, `repo_ls`, `repo_grep`, `repo_stat` |
+| Utility | `calc` |
+| Terminal action | `report_findings` |
+
+**Sub-agent contract:**
+
+A sub-agent must call `report_findings` exactly once as its final action. Calling `report_findings` sets `terminate: true`, ending the session. If the sub-agent exits without calling it, `delegate_review` returns empty findings with a warning summary.
+
+The `report_findings` schema (`Findings`):
+
+```ts
+{
+  findings: Array<{
+    severity: "blocker" | "major" | "minor" | "nit" | "info";
+    path?: string;
+    line?: number;    // numbered.diff line number
+    comment: string;
+  }>;
+  summary: string;
+}
+```
+
+**Severity levels:**
+
+| Level | When to use |
+|---|---|
+| `blocker` | Production or security break |
+| `major` | Wrong behavior on a realistic input |
+| `minor` | Real but narrow impact |
+| `nit` | Do not emit — drop instead |
+| `info` | Informational, no action required |
+
+**Finding aggregation:**
+
+After all sub-agents complete, `delegate_review` merges their `Findings` arrays into a single flat list and concatenates summaries:
+
+```ts
+const merged: Findings = {
+  findings: results.flatMap((r) => r.findings.findings),
+  summary: results.map((r) => `[${r.slot}] ${r.scope}: ${r.findings.summary}`).join("\n"),
+};
+```
+
+The orchestrator receives this merged payload and calls `submit_review` with the final consolidated findings.
+
+## Tool constraints
+
+### Timeout
+
+Most tools have a hard timeout of **10,000 ms**. If a tool call exceeds the limit, the call is rejected with a timeout error. Two tools are exempt from this limit:
+
+- `delegate_review` — sub-agents may take arbitrarily long
+- `submit_review` — sink emission (e.g. posting to Launchpad) may involve network I/O
+
+### Response size limit
+
+Every tool response is capped at **80,000 characters**. Responses exceeding the limit are truncated and a pagination hint is appended:
+
+```
+[TRUNCATED: N chars omitted — paginate with start/end params or narrow the request]
+```
+
+<Tip>
+  Use the `start`/`end` parameters on `diff_numbered` and the `startLine`/`endLine` parameters on `repo_read` to paginate large responses rather than relying on the full output being returned.
+</Tip>
+
+## Architecture diagram
+
+```
+┌─────────────────────────────────────────────────┐
+│                 Orchestrator                     │
+│                                                  │
+│  mp_metadata + diff_list_files (parallel read)  │
+│            ↓                                     │
+│     delegate_review({ scopes: [...] })           │
+│            ↓                 ↓          ↓        │
+│    ┌───────────┐   ┌──────────────┐  ┌────────┐ │
+│    │ Sub-agent │   │  Sub-agent   │  │  ...   │ │
+│    │  scope 1  │   │   scope 2    │  │        │ │
+│    │           │   │              │  │        │ │
+│    │report_    │   │ report_      │  │report_ │ │
+│    │findings() │   │ findings()   │  │findings│ │
+│    └───────────┘   └──────────────┘  └────────┘ │
+│            ↓                                     │
+│       merged Findings                            │
+│            ↓                                     │
+│       submit_review()                            │
+└─────────────────────────────────────────────────┘
+```

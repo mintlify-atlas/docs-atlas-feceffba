@@ -1,0 +1,111 @@
+---
+title: "@code-review-harness/launchpad-provider"
+description: "The launchpad-provider package exports createLaunchpadProvider(), connecting CRH to Launchpad git merge proposals via the Launchpad REST API."
+---
+
+`@code-review-harness/launchpad-provider` implements the `ReviewProvider` interface for Launchpad git merge proposals. It fetches PR metadata, preview diffs, review comments, and CI status from the Launchpad REST API, and provides git context for cloning via `git.launchpad.net`. Install it alongside `@code-review-harness/core` and pass the result of `createLaunchpadProvider()` to `createReviewSession()`.
+
+<Warning>
+  Only git-backed merge proposals are supported. Bazaar (bzr) merge proposals are rejected with an error at provider construction time.
+</Warning>
+
+## Installation
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    npm install @code-review-harness/launchpad-provider
+    ```
+  </Tab>
+  <Tab title="pnpm">
+    ```bash
+    pnpm add @code-review-harness/launchpad-provider
+    ```
+  </Tab>
+  <Tab title="yarn">
+    ```bash
+    yarn add @code-review-harness/launchpad-provider
+    ```
+  </Tab>
+</Tabs>
+
+## Import
+
+```typescript
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+```
+
+## Signature
+
+```typescript
+function createLaunchpadProvider(
+  options: LaunchpadProviderOptions
+): LaunchpadProvider
+```
+
+## Options
+
+<ParamField body="url" type="string" required>
+  The full Launchpad API URL of the merge proposal. This is the `api.launchpad.net` URL, not the browser URL. For example: `https://api.launchpad.net/devel/~user/+git/repo/+merge/123`.
+</ParamField>
+
+<ParamField body="api" type="LaunchpadApi">
+  Inject a custom `LaunchpadApi` client instance. When provided, the `accessToken`, `accessSecret`, and `consumerKey` options are ignored. Use this for testing or when you need to share a single authenticated API client across providers and sinks.
+</ParamField>
+
+<ParamField body="gitdir" type="string">
+  Absolute path to a local bare git object store to use when cloning the repository. When omitted, the provider creates or reuses a path derived from its internal configuration.
+</ParamField>
+
+<ParamField body="accessToken" type="string">
+  Launchpad OAuth access token. Overrides the `LP_ACCESS_TOKEN` environment variable. If neither this option nor the environment variable is set, authenticated API requests will fail.
+</ParamField>
+
+<ParamField body="accessSecret" type="string">
+  Launchpad OAuth access secret. Overrides the `LP_ACCESS_SECRET` environment variable.
+</ParamField>
+
+<ParamField body="consumerKey" type="string">
+  Launchpad OAuth consumer key. Overrides the `LP_CONSUMER_KEY` environment variable. Defaults to `"crh"` when neither this option nor the environment variable is present.
+</ParamField>
+
+## Environment variables
+
+When `accessToken`, `accessSecret`, and `consumerKey` are not passed as options, the provider reads from the environment:
+
+| Variable | Description |
+|---|---|
+| `LP_ACCESS_TOKEN` | OAuth access token for the Launchpad API. |
+| `LP_ACCESS_SECRET` | OAuth access secret for the Launchpad API. |
+| `LP_CONSUMER_KEY` | OAuth consumer key. Defaults to `"crh"`. |
+
+## Usage example
+
+```typescript
+import { createReviewSession } from "@code-review-harness/core";
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createStdoutSink } from "@code-review-harness/stdout-sink";
+
+// OAuth credentials are read from LP_ACCESS_TOKEN, LP_ACCESS_SECRET, LP_CONSUMER_KEY.
+const provider = createLaunchpadProvider({
+  url: "https://api.launchpad.net/devel/~user/+git/repo/+merge/123",
+});
+
+const sink = createStdoutSink();
+
+const { session } = await createReviewSession({ provider, sink });
+
+session.subscribe((event) => process.stderr.write(`${JSON.stringify(event)}\n`));
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+To inject credentials explicitly (useful in environments where env vars are not available):
+
+```typescript
+const provider = createLaunchpadProvider({
+  url: "https://api.launchpad.net/devel/~user/+git/repo/+merge/123",
+  accessToken: mySecretStore.get("LP_ACCESS_TOKEN"),
+  accessSecret: mySecretStore.get("LP_ACCESS_SECRET"),
+  consumerKey: "my-app",
+});
+```

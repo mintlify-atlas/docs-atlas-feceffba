@@ -1,0 +1,64 @@
+---
+title: "Install Code Review Harness"
+description: "Install the crh CLI globally from npm or pnpm, or build from source. Requires Node.js 20+. Provides the crh and code-review-harness command binaries."
+---
+
+Code Review Harness ships as a single bundled npm package, `code-review-harness`, and installs the `crh` and `code-review-harness` binary names. You can install it globally from npm or build it directly from source.
+
+## Requirements
+
+- Node.js 20 or later
+
+## Install from npm
+
+<CodeGroup>
+
+```sh npm
+npm install -g code-review-harness
+```
+
+```sh pnpm
+pnpm add -g code-review-harness
+```
+
+</CodeGroup>
+
+Both commands install the same package and register two binary aliases: `crh` (short form) and `code-review-harness` (full form). Either works for every command in the docs.
+
+## Verify the installation
+
+```sh
+crh --version
+```
+
+You should see the installed version number. If the command is not found, check that your global npm bin directory is on your `PATH`.
+
+## Build from source
+
+If you want to run unreleased changes or contribute to CRH, build the CLI from the repository.
+
+<Note>
+  Building from source requires [pnpm](https://pnpm.io) — it is the required package manager for this monorepo (`packageManager: pnpm@10.0.0`). npm and yarn are not supported for source builds.
+</Note>
+
+Clone the repository and install dependencies:
+
+```sh
+pnpm install
+```
+
+Build all packages in dependency order:
+
+```sh
+pnpm -r build
+```
+
+Run the CLI directly from the build output:
+
+```sh
+node apps/cli/dist/index.js --help
+```
+
+<Tip>
+  After a source build you can also link the binary globally with `pnpm link --global` from the `apps/cli` directory, which lets you use `crh` in your terminal without the `node apps/cli/dist/index.js` prefix.
+</Tip>

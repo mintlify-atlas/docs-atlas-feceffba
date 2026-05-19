@@ -1,0 +1,57 @@
+---
+title: "Code Review Harness: AI-powered code review CLI"
+description: "Code Review Harness is a pluggable CLI and TypeScript library for AI code review. It reviews merge proposals and emits structured findings to a configured sink."
+---
+
+Code Review Harness (CRH) brings AI-powered code review into your merge workflow. Point it at a Launchpad merge proposal URL, pick an LLM backend, and CRH orchestrates a full review session — delegating file inspection to parallel sub-agents and posting the resulting findings as inline comments and a summary verdict back to Launchpad, or to stdout for dry runs. CRH ships as both a standalone CLI (`crh`) and a TypeScript library you can embed in your own pipelines.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Multiple LLM backends" icon="brain">
+    Works with Anthropic Claude, OpenAI, Kimi (Moonshot), OpenRouter, and any OpenAI-compatible server via `--model` and `--model-base-url`.
+  </Card>
+  <Card title="Launchpad support" icon="code-branch">
+    Native support for Launchpad git merge proposals in v1, including OAuth-authenticated inline comments and summary verdicts.
+  </Card>
+  <Card title="Parallel sub-agent delegation" icon="arrows-split-up-and-left">
+    Large diffs fan out across concurrent sub-agents — each with its own context window — so reviews are fast and thorough.
+  </Card>
+  <Card title="Structured findings" icon="list-check">
+    Reviews use typed severity levels: `blocker`, `major`, `minor`, and `info`. No freeform text blobs, no ambiguity.
+  </Card>
+  <Card title="Stdout and Launchpad sinks" icon="plug">
+    Dry-run to stdout with zero credentials, or post inline comments and a verdict directly to Launchpad with OAuth tokens.
+  </Card>
+  <Card title="Programmatic TypeScript API" icon="code">
+    Import `createReviewSession` from `@code-review-harness/core` and wire up providers and sinks in your own scripts.
+  </Card>
+</CardGroup>
+
+## Explore the docs
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run your first AI code review in under five minutes.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/cli/review-command">
+    Every flag and option for the `crh review` command.
+  </Card>
+  <Card title="Programmatic usage" icon="brackets-curly" href="/guides/programmatic-usage">
+    Embed CRH in your own TypeScript pipelines.
+  </Card>
+  <Card title="Launchpad provider" icon="code-branch" href="/providers/launchpad-provider">
+    Configure the Launchpad merge proposal provider and OAuth credentials.
+  </Card>
+</CardGroup>
+
+## v1 scope
+
+CRH v1 supports Launchpad git merge proposals only. The following are not available in this release:
+
+- GitHub pull requests
+- Forgejo merge requests
+- Bazaar merge proposals
+- Local-git providers
+
+Support for additional platforms is planned for future releases.

@@ -1,0 +1,125 @@
+---
+title: "Build custom providers and sinks"
+description: "Implement the ReviewProvider or ReviewSink TypeScript interface to connect CRH to any code hosting platform or custom review output destination."
+---
+
+CRH's pluggable architecture separates data access from review output. A **provider** implements the `ReviewProvider` interface to fetch merge proposal data from any platform. A **sink** implements the `ReviewSink` interface to send the finished review anywhere you want. Both interfaces are stable TypeScript contracts exported from `@code-review-harness/core`.
+
+<Note>
+In v1, only the Launchpad provider ships as a supported package. GitHub, Forgejo, local-git, and Bazaar are not supported in this release.
+</Note>
+
+## The `ReviewProvider` interface
+
+Your provider must implement the following interface:
+
+```typescript
+interface ReviewProvider {
+  id: string;
+  fetchMetadata(): Promise<PRMetadata>;
+  listPreviewDiffs(): Promise<PreviewDiff[]>;
+  fetchDiff(previewDiffId: number): Promise<string>;
+  fetchCommentsForPreviewDiff(previewDiffId: number): Promise<{
+    general: GeneralComment[];
+    inline: Record<string, InlineComment[]>;
+  }>;
+  fetchCI(): Promise<CIStatus>;
+  remoteGit(): RemoteGitContext;
+}
+```
+
+### Method reference
+
+| Method | Return type | Description |
+|---|---|---|
+| `id` | `string` | Unique identifier for this provider instance (e.g. `"launchpad"`). |
+| `fetchMetadata()` | `Promise<PRMetadata>` | Returns the merge proposal URL, title, body, author, source and target branch paths. |
+| `listPreviewDiffs()` | `Promise<PreviewDiff[]>` | Returns the list of preview diffs, each with an `id`, `createdAt` timestamp, and optional `baseRev`/`headRev` git SHAs. |
+| `fetchDiff(previewDiffId)` | `Promise<string>` | Returns the raw numbered diff text for a given preview diff ID. |
+| `fetchCommentsForPreviewDiff(previewDiffId)` | `Promise<{ general, inline }>` | Returns general (top-level) and inline comments keyed by diff line number for a given preview diff. |
+| `fetchCI()` | `Promise<CIStatus>` | Returns the CI status for the merge proposal as an array of check objects. |
+| `remoteGit()` | `RemoteGitContext` | Returns the git remote context: URL, bare clone path, HTTP client, and head/base refs used to check out the branch. |
+
+## The `ReviewSink` interface
+
+Your sink must implement the following interface:
+
+```typescript
+interface ReviewSink<S extends TSchema = TSchema> {
+  id: string;
+  schema: S;
+  emit(review: Static<S>, ctx: { provider: ReviewProvider; workspace: string }): Promise<void>;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` | Unique identifier for this sink (e.g. `"stdout"`, `"launchpad"`). |
+| `schema` | `TSchema` | A [TypeBox](https://github.com/sinclairzx81/typebox) schema that defines the shape of the review object. |
+| `emit(review, ctx)` | `Promise<void>` | Called by CRH after the agent calls `submit_review`. Receives the validated review payload and a context object containing the provider instance and workspace path. |
+
+### The `schema` field
+
+The `schema` field is a TypeBox schema object. CRH uses it to build the `submit_review` tool that the agent calls when it has finished its analysis. The agent must produce a review object that validates against this schema — invalid submissions are rejected before `emit` is called.
+
+Define your schema using `@sinclair/typebox`:
+
+```typescript
+import { Type } from "@sinclair/typebox";
+
+const MyReviewSchema = Type.Object({
+  verdict: Type.Union([
+    Type.Literal("approve"),
+    Type.Literal("needs-work"),
+    Type.Literal("abstain"),
+  ]),
+  summary: Type.String(),
+});
+```
+
+## Minimal custom sink
+
+Here is a skeleton you can use as a starting point for a custom sink:
+
+```typescript
+import { Type } from "@sinclair/typebox";
+import type { ReviewSink, ReviewProvider } from "@code-review-harness/core";
+
+const MyReviewSchema = Type.Object({
+  verdict: Type.Union([
+    Type.Literal("approve"),
+    Type.Literal("needs-work"),
+    Type.Literal("abstain"),
+  ]),
+  summary: Type.String(),
+});
+
+export function createMySink(): ReviewSink<typeof MyReviewSchema> {
+  return {
+    id: "my-sink",
+    schema: MyReviewSchema,
+    async emit(review, { provider, workspace }) {
+      // review is typed as Static<typeof MyReviewSchema>
+      // Send it wherever you need: HTTP, database, file, etc.
+      console.log(JSON.stringify(review));
+    },
+  };
+}
+```
+
+Pass your sink to `createReviewSession` just like any built-in sink:
+
+```typescript
+import { createReviewSession } from "@code-review-harness/core";
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createMySink } from "./my-sink.js";
+
+const provider = createLaunchpadProvider({ url: process.argv[2] ?? "" });
+const sink = createMySink();
+const { session } = await createReviewSession({ provider, sink });
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+## API types reference
+
+All types referenced above (`PRMetadata`, `PreviewDiff`, `GeneralComment`, `InlineComment`, `CIStatus`, `RemoteGitContext`, `ReviewProvider`, `ReviewSink`) are exported from `@code-review-harness/core`. See the [API types reference](/api/types) for the full type definitions.

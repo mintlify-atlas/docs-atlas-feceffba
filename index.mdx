@@ -1,133 +1,71 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
-icon: 'star'
+title: "Code Review Harness: AI code review for merge proposals"
+description: "Code Review Harness runs AI code review sessions against merge proposals and emits structured findings to a configurable sink — CLI and TypeScript API."
 ---
 
-## Setting up
+Code Review Harness (CRH) automates AI-powered code review for merge proposals. Point it at a Launchpad merge proposal URL, choose your LLM backend, and CRH will orchestrate a review session — delegating file inspection to parallel sub-agents and posting the resulting findings to stdout or directly back to Launchpad as inline and summary comments.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run your first AI code review in under five minutes
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Installation" icon="download" href="/installation">
+    Install via npm, pnpm, or build from source
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="CLI Reference" icon="terminal" href="/cli/review-command">
+    Every flag and option for the `crh review` command
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Programmatic API" icon="code" href="/guides/programmatic-usage">
+    Embed CRH in your own TypeScript pipelines
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## How it works
 
-Everything you need to create world-class documentation.
+CRH follows a three-phase workflow for every review:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Steps>
+  <Step title="Prepare workspace">
+    CRH fetches PR metadata, CI status, diffs, and existing comments from the provider (Launchpad) and writes a deterministic workspace tree to a temporary directory. It also clones the target repository so the agent can read source files.
+  </Step>
+  <Step title="Run the review session">
+    An orchestrator agent reads the workspace, groups changed files into scopes, and fans out review work to parallel sub-agents via `delegate_review`. Each sub-agent inspects its assigned files and returns structured findings.
+  </Step>
+  <Step title="Emit results">
+    The orchestrator calls `submit_review` with the aggregated findings. The configured sink — stdout or Launchpad — receives the review and posts inline comments and a summary verdict.
+  </Step>
+</Steps>
 
-## Make your content agent ready
+## Key features
 
-Make your docs work for humans and AI agents alike.
+<CardGroup cols={2}>
+  <Card title="Multiple LLM backends" icon="brain">
+    Works with Anthropic Claude, OpenAI, Kimi (Moonshot), OpenRouter, and any OpenAI-compatible server
+  </Card>
+  <Card title="Parallel sub-agents" icon="arrows-split-up-and-left">
+    Fan out large diffs across concurrent sub-agents — each with its own context window — for fast, thorough reviews
+  </Card>
+  <Card title="Structured findings" icon="list-check">
+    Reviews return typed severity levels: `blocker`, `major`, `minor`, and `info` — no freeform text blobs
+  </Card>
+  <Card title="Pluggable providers & sinks" icon="plug">
+    Swap out providers (where code lives) and sinks (where reviews go) via a clean TypeScript interface
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Prompt component"
-    icon="robot"
-    href="/agent-ready/prompt"
-  >
-    Embed shareable AI prompts readers can copy or open in Cursor.
-  </Card>
-  <Card
-    title="Visibility"
-    icon="eye"
-    href="/agent-ready/visibility"
-  >
-    Show different content to humans and agents reading your docs.
-  </Card>
-  <Card
-    title="Contextual menu"
-    icon="bolt"
-    href="/agent-ready/contextual"
-  >
-    Give readers one-click access to Claude, ChatGPT, Cursor, and more.
-  </Card>
-  <Card
-    title="AI coding tools"
-    icon="wand-magic-sparkles"
-    href="/ai-tools/claude-code"
-  >
-    Set up Claude Code, Cursor, or Windsurf with Mintlify's skill.
-  </Card>
-</Columns>
+## Explore the docs
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Concepts: workspace model" icon="folder-tree" href="/concepts/workspace-model">
+    Understand the deterministic workspace CRH builds before running the agent
+  </Card>
+  <Card title="Concepts: agent architecture" icon="sitemap" href="/concepts/agent-architecture">
+    Learn how the orchestrator and sub-agents collaborate on a review
+  </Card>
+  <Card title="Launchpad provider" icon="code-branch" href="/providers/launchpad-provider">
+    Configure the Launchpad merge proposal provider
+  </Card>
+  <Card title="API reference" icon="book" href="/api/create-review-session">
+    Full TypeScript API reference for programmatic usage
+  </Card>
+</CardGroup>

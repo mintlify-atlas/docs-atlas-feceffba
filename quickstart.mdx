@@ -1,81 +1,82 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
-icon: 'rocket'
+title: "Get started with Code Review Harness"
+description: "Step-by-step guide to installing CRH and running your first AI code review against a Launchpad merge proposal using the stdout or Launchpad sink."
 ---
 
-## Get started in three steps
+This guide walks you through installing CRH and running your first AI code review against a Launchpad merge proposal. Before you begin, make sure you have Node.js 20 or later installed and a Launchpad merge proposal URL ready to test with.
 
-Get your documentation site running locally and make your first customization.
+<Steps>
+  <Step title="Install CRH">
+    Install the `code-review-harness` package globally. This provides both the `crh` and `code-review-harness` binary names.
 
-### Step 1: Set up your local environment
+    <CodeGroup>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```sh npm
+    npm install -g code-review-harness
+    ```
 
-### Step 2: Deploy your changes
+    ```sh pnpm
+    pnpm add -g code-review-harness
+    ```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    </CodeGroup>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    Verify the installation:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```sh
+    crh --version
+    ```
+  </Step>
 
-### Step 3: Go live
+  <Step title="Run a dry-run review to stdout">
+    Run a review against your merge proposal and print the results to stdout. This requires no credentials — it is a safe way to see CRH in action before posting anything to Launchpad.
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```sh
+    crh review \
+      --provider launchpad \
+      --pr "https://api.launchpad.net/devel/~user/+git/repo/+merge/123" \
+      --sink stdout
+    ```
+
+    CRH uses `anthropic:claude-sonnet-4-6` by default. To use a different model, pass `--model <provider>:<model-id>`. For example:
+
+    ```sh
+    crh review \
+      --provider launchpad \
+      --pr "https://api.launchpad.net/devel/~user/+git/repo/+merge/123" \
+      --sink stdout \
+      --model openai:gpt-4o
+    ```
+
+    The review findings are written as a single JSON line to stdout. Progress and agent thinking stream to stderr.
+  </Step>
+
+  <Step title="(Optional) Post the review to Launchpad">
+    To post inline comments and a verdict back to the merge proposal, set your Launchpad OAuth credentials and switch the sink to `launchpad`.
+
+    ```sh
+    export LP_ACCESS_TOKEN=your-access-token
+    export LP_ACCESS_SECRET=your-access-secret
+    export LP_CONSUMER_KEY=crh
+    ```
+
+    Then run the review with `--sink launchpad`:
+
+    ```sh
+    crh review \
+      --provider launchpad \
+      --pr "https://api.launchpad.net/devel/~user/+git/repo/+merge/123" \
+      --sink launchpad
+    ```
+
+    <Note>
+      The Launchpad sink requires valid OAuth 1.0a tokens. Without them, the request will be rejected by the Launchpad API. See the authentication guide for instructions on obtaining tokens.
+    </Note>
+  </Step>
+</Steps>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+- [Authentication guide](/guides/authentication) — obtain and configure Launchpad OAuth tokens
+- [Model selection](/cli/model-selection) — switch LLM backends and use OpenAI-compatible servers
+- [Flags reference](/cli/flags) — full list of `crh review` options

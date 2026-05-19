@@ -1,0 +1,106 @@
+---
+title: "Develop and build Code Review Harness"
+description: "Set up a local CRH development environment, run the Vitest test suite, typecheck with tsc, and publish new CLI releases to npm via GitHub Actions."
+---
+
+CRH is a pnpm workspace monorepo. The `apps/` directory contains the published CLI package, and `packages/` contains the library packages that the CLI depends on. You need Node.js 20 or later and pnpm 10 to work on the project.
+
+## Repository layout
+
+```
+code-review-harness/
+├── apps/
+│   └── cli/                  # code-review-harness (published to npm)
+└── packages/
+    ├── core/                 # @code-review-harness/core
+    ├── launchpad-sdk/        # Launchpad API client (internal)
+    └── platforms/
+        └── launchpad/
+            ├── provider/     # @code-review-harness/launchpad-provider
+            └── sink/         # @code-review-harness/launchpad-sink
+        └── stdout/
+            └── sink/         # @code-review-harness/stdout-sink
+```
+
+## Prerequisites
+
+- **Node.js** 20 or later
+- **pnpm** 10.0.0 (declared as `packageManager` in the root `package.json`)
+
+Install pnpm via Corepack if you don't have it:
+
+```sh
+corepack enable
+corepack prepare pnpm@10.0.0 --activate
+```
+
+## Set up from source
+
+```sh
+git clone https://github.com/goulinkh/code-review-harness.git
+cd code-review-harness
+pnpm install
+pnpm -r build
+```
+
+After building, run the CLI directly from source:
+
+```sh
+node apps/cli/dist/index.js --help
+```
+
+## Development commands
+
+Run these from the repository root. Each command applies to all packages in the workspace via the `-r` (recursive) flag.
+
+<Steps>
+  <Step title="Type-check all packages">
+    ```sh
+    pnpm -r typecheck
+    ```
+    Runs `tsc --noEmit` across every package. Fix all type errors before opening a pull request.
+  </Step>
+  <Step title="Run the test suite">
+    ```sh
+    pnpm -r test
+    ```
+    Runs Vitest in all packages.
+  </Step>
+  <Step title="Run tests with coverage">
+    ```sh
+    pnpm -r test:coverage
+    ```
+    Generates a V8 coverage report for each package.
+  </Step>
+  <Step title="Build all packages">
+    ```sh
+    pnpm -r build
+    ```
+    Compiles and bundles every package. Run this after making changes before testing the CLI.
+  </Step>
+</Steps>
+
+## Releasing to npm
+
+CRH publishes the `code-review-harness` CLI package using npm OIDC trusted publishing via GitHub Actions. No `NPM_TOKEN` is stored in the repository.
+
+<Steps>
+  <Step title="Bump the version">
+    Edit the `version` field in `apps/cli/package.json` to the new version number.
+  </Step>
+  <Step title="Commit, tag, and push">
+    ```sh
+    git add apps/cli/package.json
+    git commit -m "chore: release vX.Y.Z"
+    git tag vX.Y.Z
+    git push origin main --tags
+    ```
+  </Step>
+  <Step title="Create a GitHub Release">
+    Open a new release on GitHub targeting the tag you just pushed. Publishing the release triggers the `Publish to npm` workflow automatically. The package is published with provenance.
+  </Step>
+</Steps>
+
+### Dry-run
+
+You can trigger a manual dry-run without actually publishing by opening the `Publish to npm` workflow in the GitHub Actions tab and clicking **Run workflow** with the `dry-run` input set to `true`.

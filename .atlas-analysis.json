@@ -1,23 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Code Review Harness",
+  "projectType": "cli-tool",
+  "projectName": "Code Review Harness",
+  "projectDescription": "A pluggable CLI and library that runs an AI-powered code review session against a merge proposal and emits structured review findings to a configurable sink.",
   "theme": "luma",
-  "colors": {
-    "primary": "#2563EB",
-    "light": "#EFF6FF",
-    "dark": "#1E40AF"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/goulinkh/code-review-harness"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/goulinkh/code-review-harness"
-    }
-  },
+  "primaryColor": "#2563EB",
+  "lightColor": "#EFF6FF",
+  "darkColor": "#1E40AF",
   "navigation": {
     "tabs": [
       {
@@ -89,5 +77,27 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "AI-powered code review via pluggable LLM backends (Anthropic, OpenAI, Kimi/Moonshot, OpenRouter)",
+    "Launchpad merge proposal provider with OAuth 1.0a authentication",
+    "Parallel sub-agent delegation for large diffs using fan-out architecture",
+    "Structured review output with severity levels (blocker, major, minor) and inline diff line citations",
+    "Deterministic workspace materialization before agent session starts",
+    "Stdout and Launchpad comment sinks for flexible review delivery",
+    "Programmatic TypeScript API for embedding reviews in custom pipelines",
+    "Sandbox profile with filesystem and network allowlisting"
+  ],
+  "publicApiSurface": [
+    "createReviewSession(options: CreateReviewSessionOptions): Promise<ReviewSessionHandle>",
+    "createLaunchpadProvider(options: LaunchpadProviderOptions): ReviewProvider",
+    "createLaunchpadSink(options: LaunchpadSinkOptions): ReviewSink",
+    "createStdoutSink(): ReviewSink",
+    "createSandboxProfile(options: SandboxProfileOptions): Record<string, unknown>",
+    "prepareWorkspace(provider: ReviewProvider, options: PrepareWorkspaceOptions): Promise<PreparedWorkspace>",
+    "ReviewProvider interface",
+    "ReviewSink interface",
+    "crh review CLI command",
+    "FindingsSchema (TypeBox schema for sub-agent findings)"
+  ]
 }

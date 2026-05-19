@@ -1,0 +1,129 @@
+---
+title: "createReviewSession() — start a review session"
+description: "createReviewSession() prepares the workspace, wires CRH tools, and returns a ReviewSessionHandle with session, workspace, gitdir, and changedFiles."
+---
+
+`createReviewSession()` is the main entry point for programmatic use of the Code Review Harness. It clones the repository, prepares the workspace with diff data and PR metadata, wires up all built-in CRH tools, and starts an agent session ready to receive prompts. Call it once per review run and await the returned `ReviewSessionHandle`.
+
+## Import
+
+```typescript
+import { createReviewSession } from "@code-review-harness/core";
+```
+
+## Signature
+
+```typescript
+async function createReviewSession(
+  options: CreateReviewSessionOptions
+): Promise<ReviewSessionHandle>
+```
+
+<Warning>
+  This function is impure — it creates temporary directories on disk, writes workspace files, and opens a networked agent session against a remote LLM API. Ensure OAuth tokens and model API credentials are available in the environment before calling it.
+</Warning>
+
+## Options
+
+<ParamField body="provider" type="ReviewProvider" required>
+  The review provider that supplies PR metadata, diffs, comments, and CI status. Use `createLaunchpadProvider()` for Launchpad merge proposals or supply a custom implementation of the `ReviewProvider` interface.
+</ParamField>
+
+<ParamField body="sink" type="ReviewSink" required>
+  The review sink that receives the structured review output once the agent calls `submit_review`. Use `createStdoutSink()` for dry-runs or `createLaunchpadSink()` to post findings back to Launchpad.
+</ParamField>
+
+<ParamField body="workspace" type="string">
+  Absolute path to the directory where workspace files (diffs, metadata, repo checkout) are written. If omitted, a temporary directory is created automatically under the system temp path with the prefix `crh-workspace-`.
+</ParamField>
+
+<ParamField body="gitdir" type="string">
+  Absolute path to the bare git object store used when cloning the repository. If omitted, the provider's `remoteGit().gitdir` is used first; if that is also absent, a temporary directory is created with the prefix `crh-git-`.
+</ParamField>
+
+<ParamField body="model" type="Model">
+  The LLM model to use for both the orchestrator and sub-agents spawned by `delegate_review`. Accepts a `Model` value from `@earendil-works/pi-ai`. Defaults to the CLI default (`anthropic:claude-sonnet-4-6`) when omitted.
+</ParamField>
+
+<ParamField body="systemPrompt" type="string">
+  Override the orchestrator agent's system prompt. When omitted, the default CRH reviewer prompt is used. Provide this to change the agent's persona, focus areas, or output constraints for the top-level session.
+</ParamField>
+
+<ParamField body="subAgentSystemPrompt" type="string">
+  Override the system prompt for sub-agents spawned via `delegate_review`. When omitted, the default sub-reviewer prompt is used. Useful for giving delegated agents different instructions than the orchestrator.
+</ParamField>
+
+<ParamField body="workspaceProgress" type="(message: string) => void">
+  A callback called during workspace preparation with human-readable progress messages (e.g. `"Cloning repository…"`, `"Fetching diff 42…"`). Use it to stream preparation status to a terminal or log sink.
+</ParamField>
+
+<ParamField body="onChildEvent" type="(event: AgentSessionEvent, ctx: DelegateChildContext) => void">
+  A callback invoked for every event emitted by a sub-agent session created by `delegate_review`. The `ctx` argument carries `slot` (sequential sub-agent number), `scope` (what the sub-agent is reviewing), and an optional `focus` string.
+</ParamField>
+
+## Return value
+
+`createReviewSession()` resolves with a `ReviewSessionHandle` object.
+
+<ResponseField name="session" type="AgentSession">
+  The live agent session object. Call `session.subscribe(handler)` to receive streaming events (text deltas, tool calls, errors) and `session.prompt(message)` to send the initial instruction that starts the review.
+</ResponseField>
+
+<ResponseField name="workspace" type="string">
+  Absolute path to the prepared workspace directory. This is either the value you passed as `options.workspace` or the auto-created temp directory.
+</ResponseField>
+
+<ResponseField name="gitdir" type="string">
+  Absolute path to the git object store directory used during workspace preparation.
+</ResponseField>
+
+<ResponseField name="changedFiles" type="string[]">
+  Paths of all files changed in the latest preview diff round. Derived from `meta.json` entries under the workspace `preview-diffs/latest/diff/files/` tree. Returns an empty array when no preview diff is available.
+</ResponseField>
+
+## Usage example
+
+The following example is derived from `examples/launchpad-mp.ts` in the repository. It accepts a Launchpad merge proposal URL as the first CLI argument, runs a review, and streams agent events to stderr while the final JSON review is written to stdout by the sink.
+
+```typescript
+import { createReviewSession } from "@code-review-harness/core";
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createStdoutSink } from "@code-review-harness/stdout-sink";
+
+const provider = createLaunchpadProvider({ url: process.argv[2] ?? "" });
+const sink = createStdoutSink();
+
+const { session } = await createReviewSession({ provider, sink });
+
+// Forward all agent events to stderr for observability.
+session.subscribe((event) => process.stderr.write(`${JSON.stringify(event)}\n`));
+
+// Kick off the review. The agent calls submit_review when done,
+// which triggers sink.emit() with the structured findings.
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+For a more advanced setup with progress reporting and child event streaming:
+
+```typescript
+import { createReviewSession } from "@code-review-harness/core";
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createLaunchpadSink } from "@code-review-harness/launchpad-sink";
+
+const mpUrl = process.env.MP_URL!;
+
+const provider = createLaunchpadProvider({ url: mpUrl });
+const sink = createLaunchpadSink({ url: mpUrl });
+
+const { session, changedFiles } = await createReviewSession({
+  provider,
+  sink,
+  workspaceProgress: (msg) => console.log("[workspace]", msg),
+  onChildEvent: (event, ctx) => {
+    console.log(`[sub-agent slot=${ctx.slot} scope=${ctx.scope}]`, event.type);
+  },
+});
+
+console.log("Files in review:", changedFiles);
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```

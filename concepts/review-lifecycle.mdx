@@ -1,0 +1,132 @@
+---
+title: "Code review lifecycle in CRH"
+description: "Understand the complete sequence from running crh review to findings landing in your sink — workspace prep, agent execution, and output emission."
+---
+
+When you run `crh review`, CRH executes a fixed sequence of phases: it prepares a deterministic workspace, initializes an agent session with a custom tool surface, runs the orchestrator which fans work out to parallel sub-agents, aggregates the resulting findings, and finally emits the review to your chosen sink. Understanding this sequence helps you reason about what the agent can and cannot see at each stage, and what to expect when something goes wrong.
+
+<Steps>
+  <Step title="Workspace preparation">
+    `prepareWorkspace` performs a single parallel network burst against the provider:
+
+    - **Metadata**: PR title, body, author, source/target git paths → `metadata.json` and `description.md`
+    - **CI**: status checks → `ci.json`
+    - **Diff rounds**: list of all preview diff rounds → `preview-diffs/index.json`
+    - **Diffs and comments**: for each round, raw diff, numbered diff, per-file patches + line maps, general comments, and inline comments are written under `preview-diffs/<id>/`
+    - **Agent files**: `AGENTS.md`/`CLAUDE.md`/`.cursorrules`, `.cursor/rules/*.md`, `.clinerules/*`, and `.crh/skills/*.md` are read from the git object store and materialized into `workspace/agent/`
+
+    A symlink `preview-diffs/latest → <id>` points to the most recent round. The entire workspace tree is byte-stable: re-running on the same input produces identical files.
+
+    <Note>
+      The git clone (`noCheckout: true`, `depth: 50`) is cached in `gitdir`. If the head ref is already present in the object store, the clone is skipped.
+    </Note>
+  </Step>
+
+  <Step title="Session initialization">
+    `createReviewSession` configures the in-memory runtime:
+
+    1. **Settings and resource loader**: an in-memory `SettingsManager` and a `DefaultResourceLoader` are created. Extensions, skills, prompt templates, themes, and context files are all disabled — only the system prompt is injected.
+    2. **Tool registration**: all custom tools are created and wrapped with timeout enforcement (10,000 ms, exempt: `delegate_review`, `submit_review`) and response size limiting (80,000 chars, truncated with a pagination hint).
+    3. **Session creation**: `createAgentSession` is called with the tool list: built-in `read`, `grep`, `find`, `ls` plus all custom CRH tools. Mutating built-ins (`bash`, `edit`, `write`) are not included.
+    4. **Changed file list**: the session handle exposes `changedFiles` — the list of paths from the latest diff round's `meta.json` files — for use by callers.
+
+    <Info>
+      The orchestrator's `cwd` is set to the workspace directory. Built-in `read`/`grep`/`find`/`ls` are therefore scoped to the workspace, not the repository source tree.
+    </Info>
+  </Step>
+
+  <Step title="Orchestrator execution">
+    The orchestrator receives the system prompt and the initial user message (e.g. `"Review merge proposal. Submit final review with submit_review."`).
+
+    It follows a strict sequence with no multi-turn research loops:
+
+    1. Call `mp_metadata` and `diff_list_files` **in parallel** to read the PR description and the list of changed files.
+    2. Optionally call `agent_files_list` once if agent rules are likely to exist.
+    3. Group files into scopes — related files in the same module or feature go together; each sub-agent has ≥ 250k context, so scopes should be large.
+    4. Call `delegate_review` exactly **once** with the full `scopes` array.
+    5. Receive the merged `Findings` from all sub-agents.
+    6. Call `submit_review` with the final findings. No further tool calls are permitted after this.
+
+    <Warning>
+      The orchestrator is banned from calling `repo_read`, `repo_grep`, `repo_ls`, and `repo_stat` directly, from multi-turn research passes, and from sequential per-file `delegate_review` calls. All source inspection is the responsibility of sub-agents.
+    </Warning>
+  </Step>
+
+  <Step title="Sub-agent delegation">
+    `delegate_review` spawns one sub-agent per entry in the `scopes` array. All sub-agents run concurrently via `Promise.all`.
+
+    Each sub-agent:
+
+    1. Receives its own in-memory session with a focused system prompt: inspect only the assigned scope.
+    2. Reads the relevant diffs using `diff_get_file` or `diff_numbered`.
+    3. Optionally calls `repo_read` or `repo_grep` (at most one extra call per file) to confirm or refute a candidate finding from the diff alone.
+    4. Calls `mark_file_reviewed` for each file in scope once the keep/drop decision is final.
+    5. Calls `report_findings` exactly once as its terminal action with structured JSON:
+
+    ```json
+    {
+      "findings": [
+        {
+          "severity": "major",
+          "path": "src/auth/session.ts",
+          "line": 142,
+          "comment": "Session token is appended to the URL query string, leaking it in server logs."
+        }
+      ],
+      "summary": "One major finding: token leak in session.ts."
+    }
+    ```
+
+    Calling `report_findings` terminates the sub-agent session (`terminate: true`). If a sub-agent exits without calling it, `delegate_review` returns empty findings with a warning in the summary.
+
+    <Note>
+      Sub-agent tool responses are also subject to the 80,000-character limit with truncation hints. Use `start`/`end` pagination on `diff_numbered` and `startLine`/`endLine` on `repo_read` for large files.
+    </Note>
+  </Step>
+
+  <Step title="Finding aggregation">
+    After all sub-agents complete, `delegate_review` merges their outputs:
+
+    - `findings` arrays are concatenated into a single flat list
+    - `summary` strings are joined, prefixed with the slot number and scope label
+
+    The orchestrator receives this merged `Findings` object as the tool response. It then calls `submit_review` with the consolidated findings. The orchestrator's system prompt instructs it to drop speculative or unconfirmed findings and emit only what sub-agents reported with evidence.
+
+    <Tip>
+      If a sub-agent flagged a `blocker` finding that appears to require cross-scope confirmation, the orchestrator may issue a second `delegate_review` call — this is the only permitted follow-up delegation.
+    </Tip>
+  </Step>
+
+  <Step title="Sink emission">
+    `submit_review` calls `sink.emit(params, { provider, workspace })` and sets `terminate: true`, ending the orchestrator session.
+
+    **stdout sink**: writes one JSON line to stdout containing the full review payload.
+
+    **Launchpad sink**:
+    1. Posts inline comments for each finding where `line` is a valid numbered-diff line number.
+    2. Posts a summary comment with a verdict vote:
+       - `approve` → `Approve`
+       - `needs-work` → `Needs Fixing`
+       - `abstain` → `Abstain`
+
+    <Warning>
+      Inline comment keys must be single numbered-diff line numbers. Range keys and diff header line keys are silently dropped by the Launchpad sink.
+    </Warning>
+  </Step>
+</Steps>
+
+## Error handling
+
+**Tool timeouts**: if a tool call (other than `delegate_review` or `submit_review`) takes longer than 10,000 ms, the call is rejected with a timeout error surfaced to the agent. The agent's session continues and it can retry or move on.
+
+**Truncated responses**: when a tool response exceeds 80,000 characters, the response is cut and a hint is appended:
+
+```
+[TRUNCATED: N chars omitted — paginate with start/end params or narrow the request]
+```
+
+The agent is expected to paginate using the tool's `start`/`end` or `startLine`/`endLine` parameters rather than working from incomplete data.
+
+**Missing sub-agent `report_findings`**: if a sub-agent exits without calling `report_findings` (e.g. due to a model error or context exhaustion), `delegate_review` returns `{ findings: [], summary: "sub-agent ended without calling report_findings" }` for that slot. Other slots are unaffected.
+
+**Workspace errors**: if `prepareWorkspace` cannot resolve the git head ref, it throws a `WorkspaceError`. The session never starts and no sink is called.

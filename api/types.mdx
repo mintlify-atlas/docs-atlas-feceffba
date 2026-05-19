@@ -1,0 +1,331 @@
+---
+title: "Core type reference for @code-review-harness/core"
+description: "TypeScript type reference for @code-review-harness/core: PRMetadata, PreviewDiff, FilePatch, Findings, ReviewSessionHandle, and sandbox profile types."
+---
+
+`@code-review-harness/core` exports all types needed to work with the CRH API — from PR metadata and diff structures to the provider and sink contracts, the agent session handle, and sandbox configuration. Import any type directly from the package; no sub-path imports are required.
+
+```typescript
+import type {
+  PRMetadata,
+  PreviewDiff,
+  ReviewProvider,
+  ReviewSink,
+  FilePatch,
+  // ...
+} from "@code-review-harness/core";
+```
+
+---
+
+## PR and diff types
+
+### `PRMetadata`
+
+Describes the merge proposal or pull request being reviewed. Returned by `ReviewProvider.fetchMetadata()`.
+
+```typescript
+interface PRMetadata {
+  url: string;
+  title: string;
+  body: string;
+  author?: string;
+  sourceGitPath?: string;
+  sourceGitRepositoryLink?: string;
+  targetGitPath?: string;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `url` | `string` | Canonical URL of the merge proposal. |
+| `title` | `string` | Title of the merge proposal. |
+| `body` | `string` | Description body of the merge proposal. |
+| `author` | `string?` | Username or display name of the proposal author. |
+| `sourceGitPath` | `string?` | Git ref or branch path for the source (feature) branch. |
+| `sourceGitRepositoryLink` | `string?` | URL of the source repository when the source branch lives in a fork. |
+| `targetGitPath` | `string?` | Git ref or branch path for the target (base) branch. |
+
+---
+
+### `PreviewDiff`
+
+Represents one round of a diff on the merge proposal. Launchpad calls these "preview diffs"; GitHub calls them "reviews". Returned as an array by `ReviewProvider.listPreviewDiffs()`.
+
+```typescript
+interface PreviewDiff {
+  id: number;
+  createdAt: string;
+  baseRev?: string;
+  headRev?: string;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `number` | Numeric identifier for this diff round. |
+| `createdAt` | `string` | ISO 8601 timestamp when this diff was created. |
+| `baseRev` | `string?` | Git commit SHA of the base revision. |
+| `headRev` | `string?` | Git commit SHA of the head revision. |
+
+---
+
+### `GeneralComment`
+
+A top-level (non-inline) comment on the merge proposal.
+
+```typescript
+interface GeneralComment {
+  id?: string;
+  author?: string;
+  dateCreated?: string;
+  subject?: string;
+  content: string;
+}
+```
+
+---
+
+### `InlineComment`
+
+A comment anchored to a specific line in a specific preview diff round. Extends `GeneralComment`.
+
+```typescript
+interface InlineComment extends GeneralComment {
+  line: number;
+  previewDiffId: number;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `line` | `number` | Numbered-diff line the comment is attached to. |
+| `previewDiffId` | `number` | The preview diff round this comment belongs to. |
+
+---
+
+### `CIStatus`
+
+CI or check-run status for the merge proposal. Returned by `ReviewProvider.fetchCI()`.
+
+```typescript
+interface CIStatus {
+  checks: Array<Record<string, unknown>>;
+}
+```
+
+Each entry in `checks` is a raw check object whose shape depends on the platform. Providers may include status, name, URL, and result fields.
+
+---
+
+## Workspace and diff structures
+
+### `RemoteGitContext`
+
+Git configuration needed to clone the repository. Returned by `ReviewProvider.remoteGit()`.
+
+```typescript
+interface RemoteGitContext {
+  url: string;
+  gitdir: string;
+  http: HttpClient;
+  headRef: string;
+  baseRef: string;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `url` | `string` | Remote repository URL. |
+| `gitdir` | `string` | Path to the local bare git object store. |
+| `http` | `HttpClient` | `isomorphic-git`-compatible HTTP client used for cloning. |
+| `headRef` | `string` | Name of the source (head) branch ref. |
+| `baseRef` | `string` | Name of the target (base) branch ref. |
+
+---
+
+### `PreparedWorkspace`
+
+Result returned after workspace preparation is complete.
+
+```typescript
+interface PreparedWorkspace {
+  root: string;
+  latestPreviewDiffId: number | undefined;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `root` | `string` | Absolute path to the prepared workspace directory. |
+| `latestPreviewDiffId` | `number \| undefined` | ID of the most recent preview diff, or `undefined` if none exist. |
+
+---
+
+### `PrepareWorkspaceOptions`
+
+Options passed to `prepareWorkspace()` internally by `createReviewSession()`.
+
+```typescript
+interface PrepareWorkspaceOptions {
+  root: string;
+  onProgress?: (message: string) => void;
+}
+```
+
+---
+
+### `LineMapEntry`
+
+Maps a numbered-diff line back to its original file line and context side.
+
+```typescript
+interface LineMapEntry {
+  side: "before" | "after" | "context";
+  fileLine: number;
+}
+```
+
+| Value | Meaning |
+|---|---|
+| `"before"` | Line is from the base (removed) side of the diff. |
+| `"after"` | Line is from the head (added) side of the diff. |
+| `"context"` | Line is unchanged context shared by both sides. |
+
+---
+
+### `FilePatch`
+
+Parsed representation of a single file in a unified diff. Used by the agent's diff inspection tools.
+
+```typescript
+interface FilePatch {
+  safePath: string;
+  path: string;
+  status: "added" | "deleted" | "modified";
+  additions: number;
+  deletions: number;
+  patch: string;
+  lineMap: Record<string, LineMapEntry>;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `safePath` | `string` | Filesystem-safe version of the path (special characters replaced). |
+| `path` | `string` | Original file path as it appears in the diff. |
+| `status` | `"added" \| "deleted" \| "modified"` | Change type for the file. |
+| `additions` | `number` | Number of lines added. |
+| `deletions` | `number` | Number of lines deleted. |
+| `patch` | `string` | Raw unified diff patch text for this file. |
+| `lineMap` | `Record<string, LineMapEntry>` | Maps numbered-diff line numbers (as strings) to their `LineMapEntry`. |
+
+---
+
+## Agent session types
+
+### `CreateReviewSessionOptions`
+
+Options accepted by `createReviewSession()`. See the [createReviewSession() reference](/api/create-review-session) for full documentation of each field.
+
+```typescript
+interface CreateReviewSessionOptions {
+  provider: ReviewProvider;
+  sink: ReviewSink;
+  workspace?: string;
+  gitdir?: string;
+  model?: Model;
+  systemPrompt?: string;
+  subAgentSystemPrompt?: string;
+  workspaceProgress?: (message: string) => void;
+  onChildEvent?: (event: AgentSessionEvent, ctx: DelegateChildContext) => void;
+}
+```
+
+---
+
+### `DelegateChildContext`
+
+Context object passed to `onChildEvent` for each sub-agent event emitted during a `delegate_review` call.
+
+```typescript
+interface DelegateChildContext {
+  slot: number;
+  scope: string;
+  focus?: string;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `slot` | `number` | Sequential index of this sub-agent within the current session (1-based). |
+| `scope` | `string` | The scope string passed to the sub-agent (e.g. `"file: src/auth.ts"`). |
+| `focus` | `string?` | Optional extra guidance given to this sub-agent (e.g. `"security"`). |
+
+---
+
+### `ReviewSessionHandle`
+
+The object resolved by `createReviewSession()`. See the [createReviewSession() reference](/api/create-review-session) for usage details.
+
+```typescript
+interface ReviewSessionHandle {
+  session: AgentSession;
+  workspace: string;
+  gitdir: string;
+  changedFiles: string[];
+}
+```
+
+---
+
+## Sandbox types
+
+### `SandboxProfileOptions`
+
+Options for `createSandboxProfile()`, which builds a platform-level filesystem and network sandbox descriptor for the agent process.
+
+```typescript
+interface SandboxProfileOptions {
+  gitdir: string;
+  workspace: string;
+  modelApiHost?: string;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `gitdir` | `string` | Path to the git object store; granted write access. |
+| `workspace` | `string` | Path to the workspace directory; granted write access. |
+| `modelApiHost` | `string?` | Hostname of the model API. Defaults to `api.anthropic.com`. |
+
+---
+
+## Findings types
+
+`FindingsSchema` and the `Findings` type are used by sub-agents spawned via `delegate_review`. Each sub-agent must call `report_findings` with a value matching this schema.
+
+```typescript
+import { FindingsSchema, type Findings } from "@code-review-harness/core";
+```
+
+```typescript
+// Inferred shape of Findings:
+interface Findings {
+  findings: Array<{
+    severity: "blocker" | "major" | "minor" | "nit" | "info";
+    path?: string;
+    line?: number;
+    comment: string;
+  }>;
+  summary: string;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `severity` | `"blocker" \| "major" \| "minor" \| "nit" \| "info"` | How critical the finding is. |
+| `path` | `string?` | File path the finding refers to, if applicable. |
+| `line` | `number?` | Line number within the file, if applicable. |
+| `comment` | `string` | Human-readable description of the finding. |
+| `summary` | `string` | Overall summary for the scoped slice reviewed by this sub-agent. |

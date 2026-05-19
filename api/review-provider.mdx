@@ -1,0 +1,117 @@
+---
+title: "ReviewProvider interface"
+description: "The ReviewProvider interface is the contract CRH requires to fetch merge proposal data. Implement it to add support for any code hosting platform."
+---
+
+`ReviewProvider` is the interface CRH uses to fetch all data it needs about a merge proposal: metadata, diffs, comments, CI status, and git context. CRH calls its methods during workspace preparation — before the agent starts — so every method may perform network I/O. Implementing this interface is how you add CRH support for a new code hosting platform.
+
+## Interface definition
+
+```typescript
+interface ReviewProvider {
+  id: string;
+  fetchMetadata(): Promise<PRMetadata>;
+  listPreviewDiffs(): Promise<PreviewDiff[]>;
+  fetchDiff(previewDiffId: number): Promise<string>;
+  fetchCommentsForPreviewDiff(previewDiffId: number): Promise<{
+    general: GeneralComment[];
+    inline: Record<string, InlineComment[]>;
+  }>;
+  fetchCI(): Promise<CIStatus>;
+  remoteGit(): RemoteGitContext;
+}
+```
+
+## Members
+
+<ResponseField name="id" type="string" required>
+  A unique string identifier for this provider instance (e.g. `"launchpad"`). CRH uses this value in logging and when the sink's `emit` context is populated with the provider.
+</ResponseField>
+
+<ResponseField name="fetchMetadata()" type="Promise<PRMetadata>">
+  Fetches the merge proposal's title, description body, author, and git branch paths. CRH writes this data into the workspace so the agent can read it. See [`PRMetadata`](/api/types#prmetadata) for the full shape.
+</ResponseField>
+
+<ResponseField name="listPreviewDiffs()" type="Promise<PreviewDiff[]>">
+  Returns all available diff rounds for the merge proposal in chronological order. CRH uses the most recent entry (the last item in the array) as the diff to review. Each entry carries an `id`, `createdAt` timestamp, and optional `baseRev`/`headRev` git SHAs.
+</ResponseField>
+
+<ResponseField name="fetchDiff(previewDiffId)" type="Promise<string>">
+  Fetches the raw unified diff text for a specific preview diff round. `previewDiffId` is the `id` value from a `PreviewDiff` object returned by `listPreviewDiffs()`. The returned string is the full unified diff that CRH parses and writes to the workspace.
+</ResponseField>
+
+<ResponseField name="fetchCommentsForPreviewDiff(previewDiffId)" type="Promise<{ general: GeneralComment[]; inline: Record<string, InlineComment[]> }>">
+  Fetches all existing review comments for a given diff round. Returns two collections:
+  - `general` — top-level (non-inline) comments as `GeneralComment[]`
+  - `inline` — inline comments keyed by numbered-diff line number as `Record<string, InlineComment[]>`
+
+  CRH exposes these to the agent so it can take prior review feedback into account.
+</ResponseField>
+
+<ResponseField name="fetchCI()" type="Promise<CIStatus>">
+  Fetches the current CI or check-run status for the merge proposal. Returns a `CIStatus` with a `checks` array of raw platform-specific check objects. The agent uses this to assess whether the branch passes CI before recommending approval.
+</ResponseField>
+
+<ResponseField name="remoteGit()" type="RemoteGitContext">
+  Returns the git context needed to clone the repository: the remote `url`, local `gitdir` path, an `isomorphic-git`-compatible `http` client, and the `headRef`/`baseRef` branch names. This method is synchronous; any network setup should happen in the constructor.
+</ResponseField>
+
+## Implementing a custom provider
+
+The following skeleton shows the minimum viable implementation for a hypothetical `GiteaProvider`:
+
+```typescript
+import type {
+  ReviewProvider,
+  PRMetadata,
+  PreviewDiff,
+  GeneralComment,
+  InlineComment,
+  CIStatus,
+  RemoteGitContext,
+} from "@code-review-harness/core";
+import http from "isomorphic-git/http/node/index.js";
+
+export class GiteaProvider implements ReviewProvider {
+  readonly id = "gitea";
+
+  constructor(private readonly options: { url: string; token: string; gitdir: string }) {}
+
+  async fetchMetadata(): Promise<PRMetadata> {
+    // Call Gitea REST API and map the response to PRMetadata.
+    return { url: this.options.url, title: "...", body: "..." };
+  }
+
+  async listPreviewDiffs(): Promise<PreviewDiff[]> {
+    // Gitea doesn't have "preview diffs"; return one synthetic entry per commit range.
+    return [{ id: 1, createdAt: new Date().toISOString() }];
+  }
+
+  async fetchDiff(previewDiffId: number): Promise<string> {
+    // Fetch the unified diff for the given round from the Gitea compare API.
+    return "--- a/foo.ts\n+++ b/foo.ts\n...";
+  }
+
+  async fetchCommentsForPreviewDiff(previewDiffId: number) {
+    return { general: [] as GeneralComment[], inline: {} as Record<string, InlineComment[]> };
+  }
+
+  async fetchCI(): Promise<CIStatus> {
+    return { checks: [] };
+  }
+
+  remoteGit(): RemoteGitContext {
+    return {
+      url: "https://gitea.example.com/owner/repo.git",
+      gitdir: this.options.gitdir,
+      http,
+      headRef: "feature-branch",
+      baseRef: "main",
+    };
+  }
+}
+```
+
+<Note>
+  All methods except `remoteGit()` are async. CRH calls them sequentially during workspace preparation and surfaces any thrown errors to the caller of `createReviewSession()`.
+</Note>

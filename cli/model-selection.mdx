@@ -1,0 +1,89 @@
+---
+title: "Model selection for AI code reviews"
+description: "Choose the LLM backend for CRH reviews using --model provider:model-id. API keys are read from environment variables matching the provider prefix."
+---
+
+You control which LLM backs the code review session with the `--model` flag. CRH uses a `provider:model-id` format so you can switch between Anthropic, OpenAI, Kimi, OpenRouter, or any OpenAI-compatible endpoint without changing anything else in your workflow.
+
+## Format
+
+```bash
+--model <provider>:<model-id>
+```
+
+The `provider` segment determines which API client and key environment variable CRH uses. The `model-id` segment is passed directly to that provider's API.
+
+**Default:** `anthropic:claude-sonnet-4-6`
+
+## API key environment variables
+
+CRH reads the API key from an environment variable whose name matches the provider prefix in upper-case, followed by `_API_KEY`. For example:
+
+| Provider prefix | Expected env var |
+|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `openai` | `OPENAI_API_KEY` |
+| `kimi-coding` | `KIMI_API_KEY` |
+| `openrouter` | `OPENROUTER_API_KEY` |
+
+<Info>
+  Set the appropriate environment variable before running `crh review`. CRH does not prompt for credentials interactively.
+</Info>
+
+## Examples
+
+### OpenAI-compatible server with a custom base URL
+
+Use `--model-base-url` to point any OpenAI-compatible provider or local inference server at a custom endpoint. The `--model` value must be an OpenAI-compatible model when you supply `--model-base-url`.
+
+```bash
+OPENAI_API_KEY="$YOUR_KEY" crh review \
+  --provider launchpad \
+  --pr "$MP_URL" \
+  --sink stdout \
+  --model openai:gpt-5.4-mini \
+  --model-base-url "http://localhost:8080/v1"
+```
+
+### Kimi (Moonshot)
+
+Set `KIMI_API_KEY` and use the `kimi-coding` provider prefix:
+
+```bash
+KIMI_API_KEY="$YOUR_KIMI_KEY" crh review \
+  --provider launchpad \
+  --pr "$MP_URL" \
+  --sink stdout \
+  --model kimi-coding:kimi-for-coding
+```
+
+### OpenRouter
+
+OpenRouter lets you access models from many providers through a single API key. Supply your OpenRouter key via `OPENROUTER_API_KEY` and pass the full model path as the `model-id`:
+
+```bash
+crh review \
+  --provider launchpad \
+  --pr "$MP_URL" \
+  --sink stdout \
+  --model "openrouter:amazon-bedrock/eu-west-1"
+```
+
+## Using `--model-base-url`
+
+`--model-base-url` overrides the API base URL for the chosen model. It only works with OpenAI-compatible models — that is, any `openai:*` model or a registered provider whose API type is `openai-completions` or `openai-responses`.
+
+<Warning>
+  Passing `--model-base-url` with a non-OpenAI-compatible model (for example `anthropic:claude-sonnet-4-6`) causes `crh review` to exit with an error.
+</Warning>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="crh review command" icon="terminal" href="/cli/review-command">
+    Full syntax and usage examples for the review command.
+  </Card>
+  <Card title="Flags reference" icon="flag" href="/cli/flags">
+    Complete reference for every flag accepted by `crh review`.
+  </Card>
+</CardGroup>

@@ -1,0 +1,134 @@
+---
+title: "Launchpad merge proposal provider"
+description: "The Launchpad provider connects CRH to Launchpad git merge proposals, fetching diffs, comments, metadata, and CI status over the Launchpad API."
+---
+
+A **provider** is the source of merge proposal data in CRH — it fetches everything the AI agent needs to perform a code review. The Launchpad provider connects to the [Launchpad](https://launchpad.net) API and retrieves merge proposal metadata, preview diffs, diff content, inline and general comments, and CI status. It also clones the source branch via `isomorphic-git` so the agent can inspect file history. Only **git** merge proposals are supported; Bazaar merge proposals are rejected at construction time.
+
+## Installation
+
+The provider is available as a standalone package if you are using CRH programmatically:
+
+```bash
+npm install @code-review-harness/launchpad-provider
+# or
+pnpm add @code-review-harness/launchpad-provider
+```
+
+## Configuration
+
+The provider accepts a `LaunchpadProviderOptions` object:
+
+| Field           | Type     | Required | Description                                                                                         |
+| --------------- | -------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `url`           | `string` | Yes      | Launchpad API merge proposal URL (see below).                                                       |
+| `api`           | object   | No       | Pre-constructed `LaunchpadApi` instance. Overrides all OAuth options when provided.                 |
+| `gitdir`        | `string` | No       | Path for the local git clone. Defaults to a temporary directory created with `mkdtempSync`.         |
+| `accessToken`   | `string` | No       | OAuth access token. Falls back to the `LP_ACCESS_TOKEN` environment variable.                       |
+| `accessSecret`  | `string` | No       | OAuth access secret. Falls back to the `LP_ACCESS_SECRET` environment variable.                     |
+| `consumerKey`   | `string` | No       | OAuth consumer key. Falls back to `LP_CONSUMER_KEY`, then `"crh"`.                                  |
+
+### The `url` field
+
+The `url` must be a **Launchpad API** merge proposal URL, not the web UI URL. The two formats look like this:
+
+| Format     | Example                                                                      |
+| ---------- | ---------------------------------------------------------------------------- |
+| API URL ✓  | `https://api.launchpad.net/devel/~user/+git/repo/+merge/123`                 |
+| Web URL ✗  | `https://code.launchpad.net/~user/+git/repo/+merge/123`                      |
+
+The provider validates the URL on construction using the pattern `/^https:\/\/api\.launchpad\.net\/devel\/.+\/\+git\/.+\/\+merge\/\d+\/?$/`. Passing a web UI URL or a Bazaar MP URL throws an `UnsupportedRepoTypeError`.
+
+<Tip>
+  You can convert a web UI URL to an API URL by replacing `code.launchpad.net` with `api.launchpad.net/devel`.
+</Tip>
+
+### OAuth authentication
+
+The provider uses OAuth 1.0a HMAC-SHA1 to authenticate against the Launchpad API. You can supply credentials in two ways:
+
+<Steps>
+  <Step title="Environment variables (recommended)">
+    Export the following variables before running `crh`:
+
+    ```bash
+    export LP_ACCESS_TOKEN=your-access-token
+    export LP_ACCESS_SECRET=your-access-secret
+    export LP_CONSUMER_KEY=crh
+    ```
+
+    `LP_CONSUMER_KEY` defaults to `"crh"` when omitted.
+  </Step>
+  <Step title="Inline options">
+    Pass credentials directly to `createLaunchpadProvider`. These override the environment variables:
+
+    ```ts
+    const provider = createLaunchpadProvider({
+      url: "https://api.launchpad.net/devel/~user/+git/repo/+merge/123",
+      accessToken: "your-access-token",
+      accessSecret: "your-access-secret",
+      consumerKey: "crh",
+    });
+    ```
+  </Step>
+</Steps>
+
+## What the provider fetches
+
+When CRH runs a review session, the Launchpad provider retrieves:
+
+<CardGroup cols={2}>
+  <Card title="Metadata" icon="file-lines">
+    Title, description, commit message, author, source branch, and target branch from the merge proposal resource.
+  </Card>
+  <Card title="Preview diffs" icon="code-compare">
+    The list of preview diff rounds for the MP, sorted by creation time.
+  </Card>
+  <Card title="Diff content" icon="file-diff">
+    The raw unified diff for a given preview diff ID, with a fallback to the web URL when the API link is unavailable.
+  </Card>
+  <Card title="Comments" icon="comments">
+    Both inline comments (keyed by numbered-diff line) and general MP-level comments for a given preview diff round.
+  </Card>
+  <Card title="CI status" icon="circle-check">
+    Returned as an empty checks array in v1. CI integration is not yet implemented.
+  </Card>
+  <Card title="Git clone" icon="code-branch">
+    Clones the source branch from `git.launchpad.net` via `isomorphic-git` into the configured (or temp) `gitdir`.
+  </Card>
+</CardGroup>
+
+## Usage
+
+### CLI
+
+Pass `--provider launchpad` and the API URL to `--pr`:
+
+```bash
+crh review \
+  --provider launchpad \
+  --pr "https://api.launchpad.net/devel/~user/+git/repo/+merge/123" \
+  --sink stdout
+```
+
+### Programmatic
+
+```ts
+import { createLaunchpadProvider } from "@code-review-harness/launchpad-provider";
+import { createReviewSession } from "@code-review-harness/core";
+import { createStdoutSink } from "@code-review-harness/stdout-sink";
+
+const provider = createLaunchpadProvider({
+  url: "https://api.launchpad.net/devel/~user/+git/repo/+merge/123",
+});
+
+const sink = createStdoutSink();
+const { session } = await createReviewSession({ provider, sink });
+
+session.subscribe((event) => process.stderr.write(`${JSON.stringify(event)}\n`));
+await session.prompt("Review merge proposal. Submit final review with submit_review.");
+```
+
+<Note>
+  `createLaunchpadProvider` is impure — it may read environment variables for OAuth config and creates a temporary git directory when `gitdir` is not supplied.
+</Note>

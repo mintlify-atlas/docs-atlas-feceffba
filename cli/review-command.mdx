@@ -1,0 +1,87 @@
+---
+title: "crh review — run an AI code review"
+description: "The crh review command runs an AI code review against a Launchpad merge proposal and emits structured findings to a configured stdout or Launchpad sink."
+---
+
+The `crh review` command kicks off an AI-powered code review session against a Launchpad git merge proposal. It fetches the proposal metadata and diff, runs an agent session against the configured LLM, and writes the resulting review to the sink you choose — either standard output for a local dry-run, or directly back to Launchpad as inline comments and a summary vote.
+
+## Syntax
+
+```bash
+crh review --provider launchpad --pr <url> [options]
+```
+
+## Required flags
+
+<ParamField path="--provider" type="string" required>
+  The review provider to use. Only `launchpad` is supported in v1. Passing any other value causes the command to exit with an error.
+</ParamField>
+
+<ParamField path="--pr" type="string" required>
+  The Launchpad API URL for the merge proposal you want to review. Must be a git merge proposal — Bazaar merge proposals are rejected. Example: `https://api.launchpad.net/devel/~user/+git/repo/+merge/123`
+</ParamField>
+
+## Optional flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--sink` | `stdout` | Where to emit the review. `stdout` prints JSON to standard output; `launchpad` posts inline comments and a vote back to the merge proposal. |
+| `--model` | `anthropic:claude-sonnet-4-6` | LLM backend in `provider:model-id` format. See [Model selection](/cli/model-selection). |
+| `--model-base-url` | — | Override the API base URL for OpenAI-compatible providers. Requires an OpenAI-compatible model. |
+| `--debug` | — | Dump all raw session events to stderr for troubleshooting. |
+| `--no-sandbox` | — | Accepted by the CLI; sandbox enforcement is incomplete in v1. |
+| `--config` | — | Accepted by the CLI; config file loading is incomplete in v1. |
+
+For full flag details see the [flags reference](/cli/flags).
+
+## Examples
+
+<CodeGroup>
+
+```bash Dry-run to stdout
+crh review \
+  --provider launchpad \
+  --pr "https://api.launchpad.net/devel/~user/+git/repo/+merge/123" \
+  --sink stdout
+```
+
+```bash Post review to Launchpad
+LP_ACCESS_TOKEN=... \
+LP_ACCESS_SECRET=... \
+LP_CONSUMER_KEY=crh \
+crh review \
+  --provider launchpad \
+  --pr "https://api.launchpad.net/devel/~user/+git/repo/+merge/123" \
+  --sink launchpad
+```
+
+</CodeGroup>
+
+<Note>
+  When using `--sink launchpad` you must supply valid OAuth 1.0a credentials via `LP_ACCESS_TOKEN`, `LP_ACCESS_SECRET`, and `LP_CONSUMER_KEY`. `LP_CONSUMER_KEY` defaults to `crh` when omitted.
+</Note>
+
+## What happens when you run it
+
+<Steps>
+  <Step title="Workspace preparation">
+    CRH fetches the merge proposal metadata, description, CI results, and numbered diff from Launchpad and writes them to a deterministic local workspace. Progress is streamed to stderr.
+  </Step>
+  <Step title="Agent session">
+    The configured LLM agent reads the workspace files and runs a code review using read-only built-in tools plus CRH-specific tools. Mutating tools (`bash`, `edit`, `write`) are not exposed to the agent.
+  </Step>
+  <Step title="Sink emission">
+    The agent calls `submit_review` when it finishes. CRH forwards the structured output to the configured sink — either a single JSON line on stdout or inline comments and a vote on the Launchpad merge proposal.
+  </Step>
+</Steps>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Model selection" icon="cpu" href="/cli/model-selection">
+    Choose the LLM backend and configure API keys.
+  </Card>
+  <Card title="Flags reference" icon="flag" href="/cli/flags">
+    Complete reference for every flag accepted by `crh review`.
+  </Card>
+</CardGroup>
